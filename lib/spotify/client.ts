@@ -4,11 +4,13 @@ const SPOTIFY_API_BASE = "https://api.spotify.com/v1";
 
 export class SpotifyApiError extends Error {
   status: number;
+  path: string;
   body: unknown;
 
-  constructor(status: number, body: unknown) {
-    super(`Spotify API error ${status}: ${JSON.stringify(body)}`);
+  constructor(status: number, path: string, body: unknown) {
+    super(`Spotify API error ${status} on ${path}: ${JSON.stringify(body)}`);
     this.status = status;
+    this.path = path;
     this.body = body;
   }
 }
@@ -18,10 +20,14 @@ type SpotifyFetchOptions = Omit<RequestInit, "headers"> & {
   headers?: Record<string, string>;
 };
 
+const MAX_TRANSIENT_RETRIES = 5;
+
 /**
  * Fetch wrapper for the Spotify Web API. Retries on 429 using the
  * Retry-After header (Spotify's rate limit is per-app, shared across the
- * whole sync run, so this backoff is load-bearing during a full sync).
+ * whole sync run, so this backoff is load-bearing during a full sync), and
+ * retries transient 5xx errors (Spotify's API occasionally 502s mid-page on
+ * large libraries) with exponential backoff, up to MAX_TRANSIENT_RETRIES.
  */
 export async function spotifyFetch<T>(
   path: string,
@@ -34,6 +40,7 @@ export async function spotifyFetch<T>(
 
   const accessToken = await getAccessToken();
 
+  let transientRetries = 0;
   for (;;) {
     const res = await fetch(url, {
       ...init,
@@ -49,9 +56,15 @@ export async function spotifyFetch<T>(
       continue;
     }
 
+    if (res.status >= 500 && res.status < 600 && transientRetries < MAX_TRANSIENT_RETRIES) {
+      transientRetries += 1;
+      await sleep(2 ** transientRetries * 1000);
+      continue;
+    }
+
     if (!res.ok) {
       const body = await res.json().catch(() => undefined);
-      throw new SpotifyApiError(res.status, body);
+      throw new SpotifyApiError(res.status, `${url.pathname}${url.search}`, body);
     }
 
     if (res.status === 204) return undefined as T;
