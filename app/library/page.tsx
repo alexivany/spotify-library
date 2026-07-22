@@ -4,6 +4,7 @@ import { LibraryFilterSidebar } from "./filter-sidebar";
 import { ResultsTable } from "./results-table";
 import { LibraryPagination } from "./pagination";
 import { ViewToggle } from "./view-toggle";
+import { ExportLinks } from "./export-links";
 
 export const dynamic = "force-dynamic";
 
@@ -67,7 +68,10 @@ export default async function LibraryPage({
         <LibraryFilterSidebar filters={filters} genres={genres} labels={labels} folders={folders} tags={tags} />
       </aside>
       <main className="min-w-0 flex-1 space-y-4">
-        <ViewToggle view={filters.view} />
+        <div className="flex items-center justify-between">
+          <ViewToggle view={filters.view} />
+          <ExportLinks view={filters.view} searchParams={toURLSearchParams(sp)} />
+        </div>
         <ResultsTable
           view={filters.view}
           items={items}

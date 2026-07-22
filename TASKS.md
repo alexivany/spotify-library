@@ -43,8 +43,8 @@ Status legend: `[ ]` todo · `[~]` in progress · `[x]` done
 - [x] Row actions: add-to-folder popover, add/remove tags — optimistic UI
 
 ## Phase 6 — CSV export
-- [ ] `lib/export/csv.ts` — RFC-4180 encoder
-- [ ] `GET /api/export` — filtered view + export-all; joined genres/folders/tags columns
+- [x] `lib/export/csv.ts` — RFC-4180 encoder
+- [x] `GET /api/export` — filtered view + export-all; joined genres/folders/tags columns
 
 ## Phase 7 — Scheduled sync (optional)
 - [ ] `POST /api/cron/sync` guarded by CRON_SECRET

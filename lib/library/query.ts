@@ -324,3 +324,20 @@ export async function getAvailableLabels(): Promise<string[]> {
   }
   return [...labels].sort();
 }
+
+const EXPORT_PAGE_SIZE = 1000; // matches Supabase's default PostgREST `max_rows`
+
+/** Fetches every row matching `filters`, ignoring pagination — used for CSV export. */
+export async function queryAllLibraryItems(
+  filters: LibraryFilters,
+): Promise<(LibraryTrackItem | LibraryAlbumItem)[]> {
+  const all: (LibraryTrackItem | LibraryAlbumItem)[] = [];
+  let page = 1;
+  for (;;) {
+    const { items } = await queryLibrary({ ...filters, page, pageSize: EXPORT_PAGE_SIZE });
+    all.push(...items);
+    if (items.length < EXPORT_PAGE_SIZE) break;
+    page += 1;
+  }
+  return all;
+}
