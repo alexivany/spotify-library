@@ -10,12 +10,12 @@ Status legend: `[ ]` todo · `[~]` in progress · `[x]` done
 - [x] `git init`, `.gitignore`, initial commit
 
 ## Phase 1 — Database
-- [ ] `supabase/migrations/0001_init.sql`: core tables (artists, albums, tracks, link tables)
-- [ ] Organization tables (folders, folder_items, tags, item_tags) + uniqueness constraints
-- [ ] Ops table (sync_runs)
-- [ ] Indexes (GIN on artists.genres; btree label/release_date/album_type; pg_trgm on names)
-- [ ] Views `track_genres` / `album_genres` (union of artist genres)
-- [ ] Apply locally against self-hosted Supabase; generate TS types
+- [x] `supabase/migrations/0001_init.sql`: core tables (artists, albums, tracks, link tables)
+- [x] Organization tables (folders, folder_items, tags, item_tags) + uniqueness constraints
+- [x] Ops table (sync_runs)
+- [x] Indexes (GIN on artists.genres; btree label/release_date/album_type; pg_trgm on names)
+- [x] Views `track_genres` / `album_genres` (union of artist genres)
+- [x] Apply locally against self-hosted Supabase; generate TS types
 
 ## Phase 2 — Spotify auth
 - [ ] `lib/spotify/client.ts` (fetch wrapper: base URL, 429 Retry-After backoff, batching helpers)
