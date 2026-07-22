@@ -61,82 +61,124 @@ export async function runSync(): Promise<SyncCounts> {
   }
 }
 
+/**
+ * Pages through /me/albums then /me/tracks, upserting each page as soon as
+ * it's fetched and enriched — rather than collecting the whole library into
+ * memory and writing it all at the end. This means a failure partway through
+ * a large library (e.g. Spotify's own transient 5xx errors) still leaves
+ * everything synced so far persisted; a re-run just resumes from offset 0
+ * and re-upserts (idempotent, so no duplicates — see upsert* below).
+ *
+ * Albums are processed before tracks so that an album which is *both*
+ * directly saved *and* referenced by a liked track gets its real `saved_at`
+ * written exactly once (by the albums pass); the tracks pass then only
+ * touches albums it hasn't already seen, writing `saved_at: null` for those
+ * (referenced but never directly saved).
+ */
 async function performSync(): Promise<SyncCounts> {
   const supabase = getSupabaseServerClient();
 
-  const [savedTracks, savedAlbums] = await Promise.all([
-    fetchAllSavedTracks(),
-    fetchAllSavedAlbums(),
-  ]);
+  const seenArtistIds = new Set<string>();
+  const seenAlbumIds = new Set<string>();
+  const savedAlbumIds: string[] = [];
+  const savedTrackIds: string[] = [];
 
-  const artistIds = new Set<string>();
-  for (const { track } of savedTracks) {
-    for (const artist of track.artists) artistIds.add(artist.id);
-    for (const artist of track.album.artists) artistIds.add(artist.id);
-  }
-  for (const { album } of savedAlbums) {
-    for (const artist of album.artists) artistIds.add(artist.id);
-  }
-
-  const albumIds = new Set<string>();
-  for (const { track } of savedTracks) albumIds.add(track.album.id);
-  for (const { album } of savedAlbums) albumIds.add(album.id);
-
-  const [artists, albums] = await Promise.all([
-    fetchArtistsByIds([...artistIds]),
-    fetchAlbumsByIds([...albumIds]),
-  ]);
-
-  const savedAlbumMap = new Map(savedAlbums.map((s) => [s.album.id, s.added_at]));
-
-  await upsertArtists(artists);
-  await upsertAlbums(albums, savedAlbumMap);
-  await upsertAlbumArtists(albums);
-  await upsertTracks(savedTracks);
-  await upsertTrackArtists(savedTracks);
-
-  const savedTrackIds = savedTracks.map((s) => s.track.id);
-  const savedAlbumIds = [...savedAlbumMap.keys()];
-
-  const tracksUnsaved = await reconcileUnsaved(supabase, "tracks", savedTrackIds);
-  const albumsUnsaved = await reconcileUnsaved(supabase, "albums", savedAlbumIds);
-
-  return {
-    savedTracks: savedTracks.length,
-    savedAlbums: savedAlbums.length,
-    artists: artists.length,
-    albums: albums.length,
-    tracksUnsaved,
-    albumsUnsaved,
-  };
-}
-
-async function fetchAllSavedTracks(): Promise<SpotifySavedTrack[]> {
-  const items: SpotifySavedTrack[] = [];
-  let offset = 0;
-  for (;;) {
-    const page = await spotifyFetch<SpotifyPagingObject<SpotifySavedTrack>>("/me/tracks", {
-      searchParams: { limit: PAGE_LIMIT, offset },
-    });
-    items.push(...page.items);
-    if (page.items.length < PAGE_LIMIT || items.length >= page.total) break;
-    offset += PAGE_LIMIT;
-  }
-  return items;
-}
-
-async function fetchAllSavedAlbums(): Promise<SpotifySavedAlbum[]> {
-  const items: SpotifySavedAlbum[] = [];
   let offset = 0;
   for (;;) {
     const page = await spotifyFetch<SpotifyPagingObject<SpotifySavedAlbum>>("/me/albums", {
       searchParams: { limit: PAGE_LIMIT, offset },
     });
-    items.push(...page.items);
-    if (page.items.length < PAGE_LIMIT || items.length >= page.total) break;
+    if (page.items.length > 0) {
+      await processSavedAlbumsPage(page.items, seenArtistIds, seenAlbumIds);
+      for (const { album } of page.items) savedAlbumIds.push(album.id);
+    }
+    console.log(`[sync] albums: ${savedAlbumIds.length}/${page.total}`);
+    if (page.items.length < PAGE_LIMIT || savedAlbumIds.length >= page.total) break;
     offset += PAGE_LIMIT;
   }
-  return items;
+
+  offset = 0;
+  for (;;) {
+    const page = await spotifyFetch<SpotifyPagingObject<SpotifySavedTrack>>("/me/tracks", {
+      searchParams: { limit: PAGE_LIMIT, offset },
+    });
+    if (page.items.length > 0) {
+      await processSavedTracksPage(page.items, seenArtistIds, seenAlbumIds);
+      for (const { track } of page.items) savedTrackIds.push(track.id);
+    }
+    console.log(`[sync] tracks: ${savedTrackIds.length}/${page.total}`);
+    if (page.items.length < PAGE_LIMIT || savedTrackIds.length >= page.total) break;
+    offset += PAGE_LIMIT;
+  }
+
+  // Only reconcile once both passes have fully completed — this needs the
+  // complete current-library id sets, not a partial one from an interrupted run.
+  const tracksUnsaved = await reconcileUnsaved(supabase, "tracks", savedTrackIds);
+  const albumsUnsaved = await reconcileUnsaved(supabase, "albums", savedAlbumIds);
+
+  return {
+    savedTracks: savedTrackIds.length,
+    savedAlbums: savedAlbumIds.length,
+    artists: seenArtistIds.size,
+    albums: seenAlbumIds.size,
+    tracksUnsaved,
+    albumsUnsaved,
+  };
+}
+
+async function processSavedAlbumsPage(
+  savedAlbums: SpotifySavedAlbum[],
+  seenArtistIds: Set<string>,
+  seenAlbumIds: Set<string>,
+) {
+  const newArtistIds = [...new Set(savedAlbums.flatMap(({ album }) => album.artists.map((a) => a.id)))].filter(
+    (id) => !seenArtistIds.has(id),
+  );
+  const artists = newArtistIds.length ? await fetchArtistsByIds(newArtistIds) : [];
+  await upsertArtists(artists);
+  for (const artist of artists) seenArtistIds.add(artist.id);
+
+  const newSavedAlbums = savedAlbums.filter(({ album }) => !seenAlbumIds.has(album.id));
+  if (newSavedAlbums.length > 0) {
+    // /me/albums already embeds the full album object (label, upc, etc.) —
+    // no need for a redundant /albums?ids= batch call here.
+    const albums = newSavedAlbums.map((s) => s.album);
+    const savedAlbumMap = new Map(newSavedAlbums.map((s) => [s.album.id, s.added_at]));
+    await upsertAlbums(albums, savedAlbumMap);
+    await upsertAlbumArtists(albums);
+    for (const album of albums) seenAlbumIds.add(album.id);
+  }
+}
+
+async function processSavedTracksPage(
+  savedTracks: SpotifySavedTrack[],
+  seenArtistIds: Set<string>,
+  seenAlbumIds: Set<string>,
+) {
+  const artistIds = new Set<string>();
+  for (const { track } of savedTracks) {
+    for (const artist of track.artists) artistIds.add(artist.id);
+    for (const artist of track.album.artists) artistIds.add(artist.id);
+  }
+  const newArtistIds = [...artistIds].filter((id) => !seenArtistIds.has(id));
+  const artists = newArtistIds.length ? await fetchArtistsByIds(newArtistIds) : [];
+  await upsertArtists(artists);
+  for (const artist of artists) seenArtistIds.add(artist.id);
+
+  // /me/tracks only embeds a simplified album (no label/upc) — batch-fetch
+  // the full album for any album not already handled by the albums pass.
+  const newAlbumIds = [...new Set(savedTracks.map(({ track }) => track.album.id))].filter(
+    (id) => !seenAlbumIds.has(id),
+  );
+  if (newAlbumIds.length > 0) {
+    const albums = await fetchAlbumsByIds(newAlbumIds);
+    await upsertAlbums(albums, new Map());
+    await upsertAlbumArtists(albums);
+    for (const album of albums) seenAlbumIds.add(album.id);
+  }
+
+  await upsertTracks(savedTracks);
+  await upsertTrackArtists(savedTracks);
 }
 
 async function fetchArtistsByIds(ids: string[]): Promise<SpotifyArtist[]> {
