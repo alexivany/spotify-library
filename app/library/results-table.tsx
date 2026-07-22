@@ -10,6 +10,12 @@ import {
 } from "@/components/ui/table";
 import { formatDate, formatDuration } from "@/lib/library/format";
 import type { LibraryAlbumItem, LibraryTrackItem, LibraryView } from "@/lib/library/types";
+import { ItemActions } from "./item-actions";
+
+interface NamedItem {
+  id: string;
+  name: string;
+}
 
 function ArtistNames({ artists }: { artists: { id: string; name: string }[] }) {
   if (artists.length === 0) return <span className="text-muted-foreground">Unknown artist</span>;
@@ -35,9 +41,17 @@ function CoverImage({ url, alt }: { url: string | null; alt: string }) {
 export function ResultsTable({
   view,
   items,
+  folders,
+  tags,
+  itemFolderIds,
+  itemTagIds,
 }: {
   view: LibraryView;
   items: (LibraryTrackItem | LibraryAlbumItem)[];
+  folders: NamedItem[];
+  tags: NamedItem[];
+  itemFolderIds: Map<string, string[]>;
+  itemTagIds: Map<string, string[]>;
 }) {
   if (items.length === 0) {
     return (
@@ -63,6 +77,7 @@ export function ResultsTable({
               <TableHead className="text-right">Duration</TableHead>
               <TableHead className="text-right">Popularity</TableHead>
               <TableHead>Saved</TableHead>
+              <TableHead className="text-right">Actions</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -90,6 +105,16 @@ export function ResultsTable({
                 <TableCell className="text-right text-muted-foreground">{formatDuration(track.duration_ms)}</TableCell>
                 <TableCell className="text-right text-muted-foreground">{track.popularity ?? "—"}</TableCell>
                 <TableCell className="text-muted-foreground">{formatDate(track.saved_at)}</TableCell>
+                <TableCell>
+                  <ItemActions
+                    itemType="track"
+                    itemId={track.id}
+                    folders={folders}
+                    tags={tags}
+                    initialFolderIds={itemFolderIds.get(track.id) ?? []}
+                    initialTagIds={itemTagIds.get(track.id) ?? []}
+                  />
+                </TableCell>
               </TableRow>
             ))}
           </TableBody>
@@ -113,6 +138,7 @@ export function ResultsTable({
             <TableHead className="text-right">Tracks</TableHead>
             <TableHead className="text-right">Popularity</TableHead>
             <TableHead>Saved</TableHead>
+            <TableHead className="text-right">Actions</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -131,6 +157,16 @@ export function ResultsTable({
               <TableCell className="text-right text-muted-foreground">{album.total_tracks ?? "—"}</TableCell>
               <TableCell className="text-right text-muted-foreground">{album.popularity ?? "—"}</TableCell>
               <TableCell className="text-muted-foreground">{formatDate(album.saved_at)}</TableCell>
+              <TableCell>
+                <ItemActions
+                  itemType="album"
+                  itemId={album.id}
+                  folders={folders}
+                  tags={tags}
+                  initialFolderIds={itemFolderIds.get(album.id) ?? []}
+                  initialTagIds={itemTagIds.get(album.id) ?? []}
+                />
+              </TableCell>
             </TableRow>
           ))}
         </TableBody>

@@ -37,10 +37,10 @@ Status legend: `[ ]` todo · `[~]` in progress · `[x]` done
 - [x] Sorting + pagination
 
 ## Phase 5 — Folders & tags
-- [ ] Route handlers: `/api/folders`, `/api/tags`, `/api/items/*` (assign/unassign)
-- [ ] `/folders` + `/folders/[id]` pages
-- [ ] `/tags` page (name + color)
-- [ ] Row actions: add-to-folder popover, add/remove tags — optimistic UI
+- [x] Route handlers: `/api/folders`, `/api/tags`, `/api/items/*` (assign/unassign)
+- [x] `/folders` + `/folders/[id]` pages
+- [x] `/tags` page (name + color)
+- [x] Row actions: add-to-folder popover, add/remove tags — optimistic UI
 
 ## Phase 6 — CSV export
 - [ ] `lib/export/csv.ts` — RFC-4180 encoder
