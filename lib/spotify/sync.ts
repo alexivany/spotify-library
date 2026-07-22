@@ -78,8 +78,17 @@ export async function runSync(): Promise<SyncCounts> {
 async function performSync(): Promise<SyncCounts> {
   const supabase = getSupabaseServerClient();
 
-  const seenArtistIds = new Set<string>();
-  const seenAlbumIds = new Set<string>();
+  // Artists/albums already in the DB are never re-fetched from Spotify — only
+  // their id is needed to skip them, not their (possibly now-stale) data. See
+  // https://github.com/alexivany/spotify-library/issues for the tradeoff this
+  // creates (metadata like popularity/genres/label is only ever fetched once).
+  const [seenArtistIds, seenAlbumIds] = await Promise.all([
+    fetchExistingIds("artists"),
+    fetchExistingIds("albums"),
+  ]);
+  const initialArtistCount = seenArtistIds.size;
+  const initialAlbumCount = seenAlbumIds.size;
+
   const savedAlbumIds: string[] = [];
   const savedTrackIds: string[] = [];
 
@@ -119,11 +128,27 @@ async function performSync(): Promise<SyncCounts> {
   return {
     savedTracks: savedTrackIds.length,
     savedAlbums: savedAlbumIds.length,
-    artists: seenArtistIds.size,
-    albums: seenAlbumIds.size,
+    artists: seenArtistIds.size - initialArtistCount,
+    albums: seenAlbumIds.size - initialAlbumCount,
     tracksUnsaved,
     albumsUnsaved,
   };
+}
+
+/** Pages through a table's ids past PostgREST's default max_rows cap. */
+async function fetchExistingIds(table: "artists" | "albums"): Promise<Set<string>> {
+  const supabase = getSupabaseServerClient();
+  const ids = new Set<string>();
+  const pageSize = 1000;
+  let offset = 0;
+  for (;;) {
+    const { data, error } = await supabase.from(table).select("id").range(offset, offset + pageSize - 1);
+    if (error) throw new Error(`Failed to load existing ${table} ids: ${error.message}`);
+    for (const row of data ?? []) ids.add(row.id);
+    if (!data || data.length < pageSize) break;
+    offset += pageSize;
+  }
+  return ids;
 }
 
 async function processSavedAlbumsPage(
@@ -148,6 +173,12 @@ async function processSavedAlbumsPage(
     await upsertAlbumArtists(albums, seenArtistIds);
     for (const album of albums) seenAlbumIds.add(album.id);
   }
+
+  // Skipping already-synced albums above only skips re-fetching their
+  // metadata — `saved_at` still needs refreshing for every album in this
+  // page (new or not), or an album that's already synced and *still* saved
+  // would never get its saved_at re-confirmed on later runs.
+  await updateSavedAt(savedAlbums.map((s) => ({ id: s.album.id, savedAt: s.added_at })));
 }
 
 async function processSavedTracksPage(
@@ -193,57 +224,67 @@ async function processSavedTracksPage(
 
 // Spotify sometimes 403s (or 404s) an entire batch lookup when just one id in
 // it references delisted/restricted content, instead of returning null for
-// that one id. On these statuses, fall back to fetching the batch one id at a
-// time and skip only the ones that individually fail, rather than losing the
-// whole batch (and with it, the whole page/sync).
+// that one id. On these statuses, bisect the batch and retry each half,
+// recursing down to individual ids only where a failure actually is — this
+// isolates a bad id in ~log2(n) extra requests instead of n, keeping the
+// extra request volume (and rate-limit exposure) much smaller than retrying
+// every id in the batch individually.
 const BATCH_FALLBACK_STATUSES = new Set([400, 403, 404]);
 
 async function fetchArtistsByIds(ids: string[]): Promise<SpotifyArtist[]> {
   const artists: SpotifyArtist[] = [];
   for (const batch of chunk(ids, ARTIST_BATCH_SIZE)) {
     if (batch.length === 0) continue;
-    try {
-      const res = await spotifyFetch<SpotifyArtistsResponse>("/artists", {
-        searchParams: { ids: batch.join(",") },
-      });
-      artists.push(...res.artists.filter((a): a is SpotifyArtist => a !== null));
-    } catch (error) {
-      if (!(error instanceof SpotifyApiError) || !BATCH_FALLBACK_STATUSES.has(error.status)) throw error;
-      console.warn(`[sync] Batch artist fetch failed (${error.status}); retrying ${batch.length} ids individually`);
-      for (const id of batch) {
-        try {
-          artists.push(await spotifyFetch<SpotifyArtist>(`/artists/${id}`));
-        } catch (innerError) {
-          console.warn(`[sync] Skipping artist ${id}: ${innerError instanceof Error ? innerError.message : innerError}`);
-        }
-      }
-    }
+    artists.push(...(await fetchArtistBatchBisecting(batch)));
   }
   return artists;
+}
+
+async function fetchArtistBatchBisecting(ids: string[]): Promise<SpotifyArtist[]> {
+  if (ids.length === 0) return [];
+  try {
+    const res = await spotifyFetch<SpotifyArtistsResponse>("/artists", { searchParams: { ids: ids.join(",") } });
+    return res.artists.filter((a): a is SpotifyArtist => a !== null);
+  } catch (error) {
+    if (!(error instanceof SpotifyApiError) || !BATCH_FALLBACK_STATUSES.has(error.status)) throw error;
+    if (ids.length === 1) {
+      console.warn(`[sync] Skipping artist ${ids[0]} (${error.status}): ${error.message}`);
+      return [];
+    }
+    console.warn(`[sync] Batch artist fetch failed (${error.status}) for ${ids.length} ids; bisecting`);
+    const mid = Math.ceil(ids.length / 2);
+    const left = await fetchArtistBatchBisecting(ids.slice(0, mid));
+    const right = await fetchArtistBatchBisecting(ids.slice(mid));
+    return [...left, ...right];
+  }
 }
 
 async function fetchAlbumsByIds(ids: string[]): Promise<SpotifyAlbum[]> {
   const albums: SpotifyAlbum[] = [];
   for (const batch of chunk(ids, ALBUM_BATCH_SIZE)) {
     if (batch.length === 0) continue;
-    try {
-      const res = await spotifyFetch<SpotifyAlbumsResponse>("/albums", {
-        searchParams: { ids: batch.join(",") },
-      });
-      albums.push(...res.albums.filter((a): a is SpotifyAlbum => a !== null));
-    } catch (error) {
-      if (!(error instanceof SpotifyApiError) || !BATCH_FALLBACK_STATUSES.has(error.status)) throw error;
-      console.warn(`[sync] Batch album fetch failed (${error.status}); retrying ${batch.length} ids individually`);
-      for (const id of batch) {
-        try {
-          albums.push(await spotifyFetch<SpotifyAlbum>(`/albums/${id}`));
-        } catch (innerError) {
-          console.warn(`[sync] Skipping album ${id}: ${innerError instanceof Error ? innerError.message : innerError}`);
-        }
-      }
-    }
+    albums.push(...(await fetchAlbumBatchBisecting(batch)));
   }
   return albums;
+}
+
+async function fetchAlbumBatchBisecting(ids: string[]): Promise<SpotifyAlbum[]> {
+  if (ids.length === 0) return [];
+  try {
+    const res = await spotifyFetch<SpotifyAlbumsResponse>("/albums", { searchParams: { ids: ids.join(",") } });
+    return res.albums.filter((a): a is SpotifyAlbum => a !== null);
+  } catch (error) {
+    if (!(error instanceof SpotifyApiError) || !BATCH_FALLBACK_STATUSES.has(error.status)) throw error;
+    if (ids.length === 1) {
+      console.warn(`[sync] Skipping album ${ids[0]} (${error.status}): ${error.message}`);
+      return [];
+    }
+    console.warn(`[sync] Batch album fetch failed (${error.status}) for ${ids.length} ids; bisecting`);
+    const mid = Math.ceil(ids.length / 2);
+    const left = await fetchAlbumBatchBisecting(ids.slice(0, mid));
+    const right = await fetchAlbumBatchBisecting(ids.slice(mid));
+    return [...left, ...right];
+  }
 }
 
 async function upsertArtists(artists: SpotifyArtist[]) {
@@ -287,6 +328,26 @@ async function upsertAlbums(albums: SpotifyAlbum[], savedAlbumMap: Map<string, s
     const { error } = await supabase.from("albums").upsert(batch);
     if (error) throw new Error(`Failed to upsert albums: ${error.message}`);
   }
+}
+
+/**
+ * Refreshes just `saved_at` for albums that already exist — used to keep an
+ * already-synced album's saved status current without re-writing (or
+ * re-fetching) its full metadata. Uses a real UPDATE rather than a
+ * partial-column upsert: Postgres validates NOT NULL on the candidate insert
+ * row before it even checks for a conflict, so an upsert missing `name`/
+ * `album_type` fails with a NOT NULL violation even when every row already
+ * exists and the insert branch is never actually taken. Tracks don't need
+ * this: they're never skip-optimized, so they're always fully upserted.
+ */
+async function updateSavedAt(entries: { id: string; savedAt: string }[]) {
+  const supabase = getSupabaseServerClient();
+  await Promise.all(
+    entries.map(async ({ id, savedAt }) => {
+      const { error } = await supabase.from("albums").update({ saved_at: savedAt }).eq("id", id);
+      if (error) throw new Error(`Failed to refresh saved_at for album ${id}: ${error.message}`);
+    }),
+  );
 }
 
 async function upsertAlbumArtists(albums: SpotifyAlbum[], knownArtistIds: Set<string>) {
