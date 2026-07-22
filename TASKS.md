@@ -31,10 +31,10 @@ Status legend: `[ ]` todo · `[~]` in progress · `[x]` done
 - [x] `POST /api/spotify/sync` route (manual trigger)
 
 ## Phase 4 — Library browse / filter / search
-- [ ] `lib/library/query.ts` — searchParams-driven query builder (all filter params)
-- [ ] `/library` server page: tracks/albums toggle + results table/grid
-- [ ] Filter sidebar client island (content type, genre, release date, label, search, explicit, popularity, duration, saved date, folder, tag)
-- [ ] Sorting + pagination
+- [x] `lib/library/query.ts` — searchParams-driven query builder (all filter params)
+- [x] `/library` server page: tracks/albums toggle + results table/grid
+- [x] Filter sidebar client island (content type, genre, release date, label, search, explicit, popularity, duration, saved date, folder, tag)
+- [x] Sorting + pagination
 
 ## Phase 5 — Folders & tags
 - [ ] Route handlers: `/api/folders`, `/api/tags`, `/api/items/*` (assign/unassign)

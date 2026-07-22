@@ -1,0 +1,326 @@
+import { getSupabaseServerClient } from "@/lib/supabase/server";
+import {
+  ALBUM_TYPES,
+  DEFAULT_PAGE_SIZE,
+  type AlbumType,
+  type LibraryAlbumItem,
+  type LibraryFilters,
+  type LibraryQueryResult,
+  type LibraryTrackItem,
+  type LibraryView,
+  type SortOption,
+} from "./types";
+
+type RawSearchParams = Record<string, string | string[] | undefined>;
+
+function first(value: string | string[] | undefined): string | undefined {
+  return Array.isArray(value) ? value[0] : value;
+}
+
+function parseList(value: string | string[] | undefined): string[] {
+  const raw = first(value);
+  return raw ? raw.split(",").filter(Boolean) : [];
+}
+
+function parseNumber(value: string | string[] | undefined): number | undefined {
+  const raw = first(value);
+  if (!raw) return undefined;
+  const n = Number(raw);
+  return Number.isFinite(n) ? n : undefined;
+}
+
+const VALID_SORTS = new Set<SortOption>([
+  "saved_at-desc",
+  "saved_at-asc",
+  "name-asc",
+  "name-desc",
+  "release_date-desc",
+  "release_date-asc",
+  "popularity-desc",
+  "popularity-asc",
+]);
+
+export function parseLibraryFilters(searchParams: RawSearchParams): LibraryFilters {
+  const view: LibraryView = first(searchParams.view) === "albums" ? "albums" : "tracks";
+  const albumTypes = parseList(searchParams.albumType).filter((t): t is AlbumType =>
+    ALBUM_TYPES.includes(t as AlbumType),
+  );
+  const explicitRaw = first(searchParams.explicit);
+  const sortRaw = first(searchParams.sort) as SortOption | undefined;
+
+  return {
+    view,
+    albumTypes,
+    genres: parseList(searchParams.genre),
+    releaseFrom: first(searchParams.releaseFrom),
+    releaseTo: first(searchParams.releaseTo),
+    label: first(searchParams.label),
+    q: first(searchParams.q),
+    explicit: explicitRaw === "true" ? true : explicitRaw === "false" ? false : undefined,
+    popularityMin: parseNumber(searchParams.popularityMin),
+    popularityMax: parseNumber(searchParams.popularityMax),
+    durationMinMs: parseNumber(searchParams.durationMinMs),
+    durationMaxMs: parseNumber(searchParams.durationMaxMs),
+    savedFrom: first(searchParams.savedFrom),
+    savedTo: first(searchParams.savedTo),
+    folderId: first(searchParams.folder),
+    tagId: first(searchParams.tag),
+    sort: sortRaw && VALID_SORTS.has(sortRaw) ? sortRaw : "saved_at-desc",
+    page: Math.max(1, parseNumber(searchParams.page) ?? 1),
+    pageSize: parseNumber(searchParams.pageSize) ?? DEFAULT_PAGE_SIZE,
+  };
+}
+
+function escapeIlike(value: string): string {
+  return value.replace(/[%_]/g, (c) => `\\${c}`);
+}
+
+async function resolveGenreIds(view: LibraryView, genres: string[]): Promise<string[]> {
+  const supabase = getSupabaseServerClient();
+  if (view === "tracks") {
+    const { data, error } = await supabase.from("track_genres").select("track_id").overlaps("genres", genres);
+    if (error) throw new Error(`Failed to resolve genre filter: ${error.message}`);
+    return (data ?? []).map((row) => row.track_id).filter((id): id is string => id !== null);
+  }
+  const { data, error } = await supabase.from("album_genres").select("album_id").overlaps("genres", genres);
+  if (error) throw new Error(`Failed to resolve genre filter: ${error.message}`);
+  return (data ?? []).map((row) => row.album_id).filter((id): id is string => id !== null);
+}
+
+async function resolveFolderIds(view: LibraryView, folderId: string): Promise<string[]> {
+  const supabase = getSupabaseServerClient();
+  const itemType = view === "tracks" ? "track" : "album";
+  const { data, error } = await supabase
+    .from("folder_items")
+    .select("item_id")
+    .eq("folder_id", folderId)
+    .eq("item_type", itemType);
+  if (error) throw new Error(`Failed to resolve folder filter: ${error.message}`);
+  return (data ?? []).map((row) => row.item_id);
+}
+
+async function resolveTagIds(view: LibraryView, tagId: string): Promise<string[]> {
+  const supabase = getSupabaseServerClient();
+  const itemType = view === "tracks" ? "track" : "album";
+  const { data, error } = await supabase
+    .from("item_tags")
+    .select("item_id")
+    .eq("tag_id", tagId)
+    .eq("item_type", itemType);
+  if (error) throw new Error(`Failed to resolve tag filter: ${error.message}`);
+  return (data ?? []).map((row) => row.item_id);
+}
+
+async function resolveSearchIds(view: LibraryView, q: string): Promise<string[]> {
+  const supabase = getSupabaseServerClient();
+  const pattern = `%${escapeIlike(q)}%`;
+  const ids = new Set<string>();
+
+  if (view === "tracks") {
+    const [byName, byAlbum, byArtist] = await Promise.all([
+      supabase.from("tracks").select("id").ilike("name", pattern),
+      supabase.from("tracks").select("id, albums!inner(name)").ilike("albums.name", pattern),
+      supabase.from("track_artists").select("track_id, artists!inner(name)").ilike("artists.name", pattern),
+    ]);
+    for (const row of byName.data ?? []) ids.add(row.id);
+    for (const row of byAlbum.data ?? []) ids.add(row.id);
+    for (const row of byArtist.data ?? []) ids.add(row.track_id);
+  } else {
+    const [byName, byArtist] = await Promise.all([
+      supabase.from("albums").select("id").ilike("name", pattern),
+      supabase.from("album_artists").select("album_id, artists!inner(name)").ilike("artists.name", pattern),
+    ]);
+    for (const row of byName.data ?? []) ids.add(row.id);
+    for (const row of byArtist.data ?? []) ids.add(row.album_id);
+  }
+
+  return [...ids];
+}
+
+const NO_MATCH_SENTINEL = "00000000-0000-0000-0000-000000000000";
+
+async function intersectIdFilter(
+  currentIds: string[] | undefined,
+  resolver: () => Promise<string[]>,
+): Promise<string[]> {
+  const resolved = await resolver();
+  if (currentIds === undefined) return resolved.length ? resolved : [NO_MATCH_SENTINEL];
+  const resolvedSet = new Set(resolved);
+  const intersected = currentIds.filter((id) => resolvedSet.has(id));
+  return intersected.length ? intersected : [NO_MATCH_SENTINEL];
+}
+
+export async function queryLibrary(
+  filters: LibraryFilters,
+): Promise<LibraryQueryResult<LibraryTrackItem | LibraryAlbumItem>> {
+  return filters.view === "tracks" ? queryTracks(filters) : queryAlbums(filters);
+}
+
+async function resolveIdFilter(filters: LibraryFilters): Promise<string[] | undefined> {
+  let ids: string[] | undefined;
+  if (filters.genres.length > 0) {
+    ids = await intersectIdFilter(ids, () => resolveGenreIds(filters.view, filters.genres));
+  }
+  if (filters.folderId) {
+    ids = await intersectIdFilter(ids, () => resolveFolderIds(filters.view, filters.folderId!));
+  }
+  if (filters.tagId) {
+    ids = await intersectIdFilter(ids, () => resolveTagIds(filters.view, filters.tagId!));
+  }
+  if (filters.q) {
+    ids = await intersectIdFilter(ids, () => resolveSearchIds(filters.view, filters.q!));
+  }
+  return ids;
+}
+
+async function queryTracks(filters: LibraryFilters): Promise<LibraryQueryResult<LibraryTrackItem>> {
+  const supabase = getSupabaseServerClient();
+
+  let query = supabase
+    .from("tracks")
+    .select(
+      `id,name,duration_ms,explicit,popularity,saved_at,preview_url,
+       albums!inner(id,name,album_type,release_date,label,image_url),
+       track_artists(position,artists(id,name))`,
+      { count: "exact" },
+    )
+    .not("saved_at", "is", null);
+
+  if (filters.albumTypes.length > 0) query = query.in("albums.album_type", filters.albumTypes);
+  if (filters.label) query = query.ilike("albums.label", `%${escapeIlike(filters.label)}%`);
+  if (filters.releaseFrom) query = query.gte("albums.release_date", filters.releaseFrom);
+  if (filters.releaseTo) query = query.lte("albums.release_date", filters.releaseTo);
+  if (filters.explicit !== undefined) query = query.eq("explicit", filters.explicit);
+  if (filters.popularityMin !== undefined) query = query.gte("popularity", filters.popularityMin);
+  if (filters.popularityMax !== undefined) query = query.lte("popularity", filters.popularityMax);
+  if (filters.durationMinMs !== undefined) query = query.gte("duration_ms", filters.durationMinMs);
+  if (filters.durationMaxMs !== undefined) query = query.lte("duration_ms", filters.durationMaxMs);
+  if (filters.savedFrom) query = query.gte("saved_at", filters.savedFrom);
+  if (filters.savedTo) query = query.lte("saved_at", filters.savedTo);
+
+  const idFilter = await resolveIdFilter(filters);
+  if (idFilter) query = query.in("id", idFilter);
+
+  const [sortColumn, sortDirection] = filters.sort.split("-") as [string, "asc" | "desc"];
+  const ascending = sortDirection === "asc";
+  query =
+    sortColumn === "release_date"
+      ? query.order("release_date", { referencedTable: "albums", ascending })
+      : query.order(sortColumn, { ascending });
+
+  const from = (filters.page - 1) * filters.pageSize;
+  const to = from + filters.pageSize - 1;
+  query = query.range(from, to);
+
+  const { data, error, count } = await query;
+  if (error) throw new Error(`Failed to query tracks: ${error.message}`);
+
+  const items: LibraryTrackItem[] = (data ?? []).map((row) => ({
+    id: row.id,
+    name: row.name,
+    duration_ms: row.duration_ms,
+    explicit: row.explicit,
+    popularity: row.popularity,
+    saved_at: row.saved_at,
+    preview_url: row.preview_url,
+    album: row.albums
+      ? {
+          id: row.albums.id,
+          name: row.albums.name,
+          album_type: row.albums.album_type,
+          release_date: row.albums.release_date,
+          label: row.albums.label,
+          image_url: row.albums.image_url,
+        }
+      : null,
+    artists: (row.track_artists ?? [])
+      .slice()
+      .sort((a, b) => a.position - b.position)
+      .map((ta) => ta.artists)
+      .filter((a): a is { id: string; name: string } => a !== null),
+  }));
+
+  return { items, total: count ?? 0, page: filters.page, pageSize: filters.pageSize };
+}
+
+async function queryAlbums(filters: LibraryFilters): Promise<LibraryQueryResult<LibraryAlbumItem>> {
+  const supabase = getSupabaseServerClient();
+
+  let query = supabase
+    .from("albums")
+    .select(
+      `id,name,album_type,release_date,release_date_precision,label,total_tracks,popularity,image_url,saved_at,
+       album_artists(position,artists(id,name))`,
+      { count: "exact" },
+    )
+    .not("saved_at", "is", null);
+
+  if (filters.albumTypes.length > 0) query = query.in("album_type", filters.albumTypes);
+  if (filters.label) query = query.ilike("label", `%${escapeIlike(filters.label)}%`);
+  if (filters.releaseFrom) query = query.gte("release_date", filters.releaseFrom);
+  if (filters.releaseTo) query = query.lte("release_date", filters.releaseTo);
+  if (filters.popularityMin !== undefined) query = query.gte("popularity", filters.popularityMin);
+  if (filters.popularityMax !== undefined) query = query.lte("popularity", filters.popularityMax);
+  if (filters.savedFrom) query = query.gte("saved_at", filters.savedFrom);
+  if (filters.savedTo) query = query.lte("saved_at", filters.savedTo);
+
+  const idFilter = await resolveIdFilter(filters);
+  if (idFilter) query = query.in("id", idFilter);
+
+  const [sortColumn, sortDirection] = filters.sort.split("-") as [string, "asc" | "desc"];
+  const ascending = sortDirection === "asc";
+  query = query.order(sortColumn, { ascending });
+
+  const from = (filters.page - 1) * filters.pageSize;
+  const to = from + filters.pageSize - 1;
+  query = query.range(from, to);
+
+  const { data, error, count } = await query;
+  if (error) throw new Error(`Failed to query albums: ${error.message}`);
+
+  const items: LibraryAlbumItem[] = (data ?? []).map((row) => ({
+    id: row.id,
+    name: row.name,
+    album_type: row.album_type,
+    release_date: row.release_date,
+    release_date_precision: row.release_date_precision,
+    label: row.label,
+    total_tracks: row.total_tracks,
+    popularity: row.popularity,
+    image_url: row.image_url,
+    saved_at: row.saved_at,
+    artists: (row.album_artists ?? [])
+      .slice()
+      .sort((a, b) => a.position - b.position)
+      .map((aa) => aa.artists)
+      .filter((a): a is { id: string; name: string } => a !== null),
+  }));
+
+  return { items, total: count ?? 0, page: filters.page, pageSize: filters.pageSize };
+}
+
+export async function getAvailableGenres(): Promise<string[]> {
+  const supabase = getSupabaseServerClient();
+  const { data, error } = await supabase.from("artists").select("genres");
+  if (error) throw new Error(`Failed to load genres: ${error.message}`);
+  const genres = new Set<string>();
+  for (const row of data ?? []) {
+    for (const genre of row.genres ?? []) genres.add(genre);
+  }
+  return [...genres].sort();
+}
+
+export async function getAvailableLabels(): Promise<string[]> {
+  const supabase = getSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("albums")
+    .select("label")
+    .not("label", "is", null)
+    .not("saved_at", "is", null);
+  if (error) throw new Error(`Failed to load labels: ${error.message}`);
+  const labels = new Set<string>();
+  for (const row of data ?? []) {
+    if (row.label) labels.add(row.label);
+  }
+  return [...labels].sort();
+}
