@@ -24,11 +24,11 @@ Status legend: `[ ]` todo · `[~]` in progress · `[x]` done
 - [x] `GET /api/spotify/callback` (code→token exchange; surface refresh token to paste into env)
 
 ## Phase 3 — Sync pipeline
-- [ ] `lib/spotify/sync.ts`: page /me/tracks + /me/albums
-- [ ] Enrich: batch /artists (genres) + /albums (label, upc)
-- [ ] Upsert artists → albums → tracks → link tables (idempotent)
-- [ ] Reconcile un-saves; write sync_runs counts + status
-- [ ] `POST /api/spotify/sync` route (manual trigger)
+- [x] `lib/spotify/sync.ts`: page /me/tracks + /me/albums
+- [x] Enrich: batch /artists (genres) + /albums (label, upc)
+- [x] Upsert artists → albums → tracks → link tables (idempotent)
+- [x] Reconcile un-saves; write sync_runs counts + status
+- [x] `POST /api/spotify/sync` route (manual trigger)
 
 ## Phase 4 — Library browse / filter / search
 - [ ] `lib/library/query.ts` — searchParams-driven query builder (all filter params)
