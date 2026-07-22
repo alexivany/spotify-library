@@ -1,6 +1,6 @@
 import { getSupabaseServerClient } from "@/lib/supabase/server";
 import type { Json } from "@/lib/supabase/types";
-import { chunk, spotifyFetch } from "./client";
+import { chunk, SpotifyApiError, spotifyFetch } from "./client";
 import type {
   SpotifyAlbum,
   SpotifyAlbumsResponse,
@@ -145,7 +145,7 @@ async function processSavedAlbumsPage(
     const albums = newSavedAlbums.map((s) => s.album);
     const savedAlbumMap = new Map(newSavedAlbums.map((s) => [s.album.id, s.added_at]));
     await upsertAlbums(albums, savedAlbumMap);
-    await upsertAlbumArtists(albums);
+    await upsertAlbumArtists(albums, seenArtistIds);
     for (const album of albums) seenAlbumIds.add(album.id);
   }
 }
@@ -173,22 +173,51 @@ async function processSavedTracksPage(
   if (newAlbumIds.length > 0) {
     const albums = await fetchAlbumsByIds(newAlbumIds);
     await upsertAlbums(albums, new Map());
-    await upsertAlbumArtists(albums);
+    await upsertAlbumArtists(albums, seenArtistIds);
     for (const album of albums) seenAlbumIds.add(album.id);
   }
 
-  await upsertTracks(savedTracks);
-  await upsertTrackArtists(savedTracks);
+  // A track whose album couldn't be fetched at all (batch and individual
+  // fallback both failed) would violate the tracks.album_id FK — skip it
+  // rather than crashing the whole page.
+  const syncableTracks = savedTracks.filter(({ track }) => seenAlbumIds.has(track.album.id));
+  for (const { track } of savedTracks) {
+    if (!seenAlbumIds.has(track.album.id)) {
+      console.warn(`[sync] Skipping track ${track.id} (${track.name}): album ${track.album.id} could not be fetched`);
+    }
+  }
+
+  await upsertTracks(syncableTracks);
+  await upsertTrackArtists(syncableTracks, seenArtistIds);
 }
+
+// Spotify sometimes 403s (or 404s) an entire batch lookup when just one id in
+// it references delisted/restricted content, instead of returning null for
+// that one id. On these statuses, fall back to fetching the batch one id at a
+// time and skip only the ones that individually fail, rather than losing the
+// whole batch (and with it, the whole page/sync).
+const BATCH_FALLBACK_STATUSES = new Set([400, 403, 404]);
 
 async function fetchArtistsByIds(ids: string[]): Promise<SpotifyArtist[]> {
   const artists: SpotifyArtist[] = [];
   for (const batch of chunk(ids, ARTIST_BATCH_SIZE)) {
     if (batch.length === 0) continue;
-    const res = await spotifyFetch<SpotifyArtistsResponse>("/artists", {
-      searchParams: { ids: batch.join(",") },
-    });
-    artists.push(...res.artists.filter((a): a is SpotifyArtist => a !== null));
+    try {
+      const res = await spotifyFetch<SpotifyArtistsResponse>("/artists", {
+        searchParams: { ids: batch.join(",") },
+      });
+      artists.push(...res.artists.filter((a): a is SpotifyArtist => a !== null));
+    } catch (error) {
+      if (!(error instanceof SpotifyApiError) || !BATCH_FALLBACK_STATUSES.has(error.status)) throw error;
+      console.warn(`[sync] Batch artist fetch failed (${error.status}); retrying ${batch.length} ids individually`);
+      for (const id of batch) {
+        try {
+          artists.push(await spotifyFetch<SpotifyArtist>(`/artists/${id}`));
+        } catch (innerError) {
+          console.warn(`[sync] Skipping artist ${id}: ${innerError instanceof Error ? innerError.message : innerError}`);
+        }
+      }
+    }
   }
   return artists;
 }
@@ -197,10 +226,22 @@ async function fetchAlbumsByIds(ids: string[]): Promise<SpotifyAlbum[]> {
   const albums: SpotifyAlbum[] = [];
   for (const batch of chunk(ids, ALBUM_BATCH_SIZE)) {
     if (batch.length === 0) continue;
-    const res = await spotifyFetch<SpotifyAlbumsResponse>("/albums", {
-      searchParams: { ids: batch.join(",") },
-    });
-    albums.push(...res.albums.filter((a): a is SpotifyAlbum => a !== null));
+    try {
+      const res = await spotifyFetch<SpotifyAlbumsResponse>("/albums", {
+        searchParams: { ids: batch.join(",") },
+      });
+      albums.push(...res.albums.filter((a): a is SpotifyAlbum => a !== null));
+    } catch (error) {
+      if (!(error instanceof SpotifyApiError) || !BATCH_FALLBACK_STATUSES.has(error.status)) throw error;
+      console.warn(`[sync] Batch album fetch failed (${error.status}); retrying ${batch.length} ids individually`);
+      for (const id of batch) {
+        try {
+          albums.push(await spotifyFetch<SpotifyAlbum>(`/albums/${id}`));
+        } catch (innerError) {
+          console.warn(`[sync] Skipping album ${id}: ${innerError instanceof Error ? innerError.message : innerError}`);
+        }
+      }
+    }
   }
   return albums;
 }
@@ -248,13 +289,17 @@ async function upsertAlbums(albums: SpotifyAlbum[], savedAlbumMap: Map<string, s
   }
 }
 
-async function upsertAlbumArtists(albums: SpotifyAlbum[]) {
+async function upsertAlbumArtists(albums: SpotifyAlbum[], knownArtistIds: Set<string>) {
   const rows = albums.flatMap((album) =>
-    album.artists.map((artist, position) => ({
-      album_id: album.id,
-      artist_id: artist.id,
-      position,
-    })),
+    album.artists
+      .map((artist, position) => ({
+        album_id: album.id,
+        artist_id: artist.id,
+        position,
+      }))
+      // An artist that failed to fetch (see BATCH_FALLBACK_STATUSES) was never
+      // upserted into `artists`, so linking to it would violate the FK.
+      .filter((row) => knownArtistIds.has(row.artist_id)),
   );
   if (rows.length === 0) return;
   const supabase = getSupabaseServerClient();
@@ -290,13 +335,15 @@ async function upsertTracks(savedTracks: SpotifySavedTrack[]) {
   }
 }
 
-async function upsertTrackArtists(savedTracks: SpotifySavedTrack[]) {
+async function upsertTrackArtists(savedTracks: SpotifySavedTrack[], knownArtistIds: Set<string>) {
   const rows = savedTracks.flatMap(({ track }) =>
-    track.artists.map((artist, position) => ({
-      track_id: track.id,
-      artist_id: artist.id,
-      position,
-    })),
+    track.artists
+      .map((artist, position) => ({
+        track_id: track.id,
+        artist_id: artist.id,
+        position,
+      }))
+      .filter((row) => knownArtistIds.has(row.artist_id)),
   );
   if (rows.length === 0) return;
   const supabase = getSupabaseServerClient();
