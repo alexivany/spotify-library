@@ -252,7 +252,7 @@ async function upsertArtists(artists: SpotifyArtist[]) {
   const rows = artists.map((artist) => ({
     id: artist.id,
     name: artist.name,
-    genres: artist.genres,
+    genres: artist.genres ?? [],
     popularity: artist.popularity,
     followers: artist.followers?.total ?? null,
     image_url: artist.images[0]?.url ?? null,

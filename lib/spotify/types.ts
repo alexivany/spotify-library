@@ -10,7 +10,9 @@ export interface SpotifySimplifiedArtist {
 }
 
 export interface SpotifyArtist extends SpotifySimplifiedArtist {
-  genres: string[];
+  // Observed as `null` in the wild for some artists, despite Spotify's docs
+  // claiming this is always an array.
+  genres: string[] | null;
   popularity: number;
   followers: { total: number };
   images: SpotifyImage[];
