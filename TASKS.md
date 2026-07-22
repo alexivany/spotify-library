@@ -18,10 +18,10 @@ Status legend: `[ ]` todo · `[~]` in progress · `[x]` done
 - [x] Apply locally against self-hosted Supabase; generate TS types
 
 ## Phase 2 — Spotify auth
-- [ ] `lib/spotify/client.ts` (fetch wrapper: base URL, 429 Retry-After backoff, batching helpers)
-- [ ] `lib/spotify/token.ts` (`getAccessToken()` — refresh from stored refresh token, in-memory cache)
-- [ ] `GET /api/spotify/login` (authorize redirect + state)
-- [ ] `GET /api/spotify/callback` (code→token exchange; surface refresh token to paste into env)
+- [x] `lib/spotify/client.ts` (fetch wrapper: base URL, 429 Retry-After backoff, batching helpers)
+- [x] `lib/spotify/token.ts` (`getAccessToken()` — refresh from stored refresh token, in-memory cache)
+- [x] `GET /api/spotify/login` (authorize redirect + state)
+- [x] `GET /api/spotify/callback` (code→token exchange; surface refresh token to paste into env)
 
 ## Phase 3 — Sync pipeline
 - [ ] `lib/spotify/sync.ts`: page /me/tracks + /me/albums
