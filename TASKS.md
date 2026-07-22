@@ -47,9 +47,10 @@ Status legend: `[ ]` todo · `[~]` in progress · `[x]` done
 - [x] `GET /api/export` — filtered view + export-all; joined genres/folders/tags columns
 
 ## Phase 7 — Scheduled sync (optional)
-- [ ] `POST /api/cron/sync` guarded by CRON_SECRET
-- [ ] Document pg_cron + pg_net nightly trigger in README
+- [x] `POST /api/cron/sync` guarded by CRON_SECRET
+- [x] Document pg_cron + pg_net nightly trigger in README
 
 ## Phase 8 — Docs & verification
-- [ ] `README.md`: Spotify app setup, first-run OAuth, sync, cron
-- [ ] Run full verification checklist from PLAN.md
+- [x] `README.md`: Spotify app setup, first-run OAuth, sync, cron
+- [x] Run full verification checklist from PLAN.md (steps 1–6; step 2/3's
+      real Spotify OAuth requires the user's own account — see README)
