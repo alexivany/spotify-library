@@ -1,3 +1,4 @@
+import { backupDatabaseToCsv } from "@/lib/backup/csv";
 import { getSupabaseServerClient } from "@/lib/supabase/server";
 import type { Json } from "@/lib/supabase/types";
 import { chunk, SpotifyApiError, spotifyFetch } from "./client";
@@ -9,6 +10,7 @@ import type {
   SpotifyPagingObject,
   SpotifySavedAlbum,
   SpotifySavedTrack,
+  SpotifySimplifiedArtist,
 } from "./types";
 
 /** Spotify API responses are plain JSON but don't structurally satisfy the generated `Json` type. */
@@ -47,6 +49,16 @@ export async function runSync(): Promise<SyncCounts> {
       .from("sync_runs")
       .update({ status: "success", finished_at: new Date().toISOString(), counts: asJson(counts) })
       .eq("id", run.id);
+    // A backup failure shouldn't turn a successful sync into a reported
+    // failure — log it and move on rather than throwing.
+    try {
+      const backup = await backupDatabaseToCsv();
+      console.log(`[sync] CSV backup written to ${backup.dir}`);
+    } catch (backupError) {
+      console.warn(
+        `[sync] CSV backup failed: ${backupError instanceof Error ? backupError.message : String(backupError)}`,
+      );
+    }
     return counts;
   } catch (error) {
     await supabase
@@ -77,6 +89,7 @@ export async function runSync(): Promise<SyncCounts> {
  */
 async function performSync(): Promise<SyncCounts> {
   const supabase = getSupabaseServerClient();
+  forbiddenSkipCount = 0;
 
   // Artists/albums already in the DB are never re-fetched from Spotify — only
   // their id is needed to skip them, not their (possibly now-stale) data. See
@@ -170,9 +183,16 @@ async function processSavedAlbumsPage(
     const albums = newSavedAlbums.map((s) => s.album);
     const savedAlbumMap = new Map(newSavedAlbums.map((s) => [s.album.id, s.added_at]));
     await upsertAlbums(albums, savedAlbumMap);
-    await upsertAlbumArtists(albums, seenArtistIds);
     for (const album of albums) seenAlbumIds.add(album.id);
   }
+
+  // Re-link every album in this page to its artists, not just newly-inserted
+  // ones. An earlier run may have inserted the album before all its artists
+  // were fetchable (e.g. hit a quota wall mid-run), leaving the link
+  // permanently missing since an already-seen album is never revisited
+  // otherwise. upsertAlbumArtists is an idempotent upsert, so re-linking an
+  // already-complete album every run is just a cheap no-op write.
+  await upsertAlbumArtists(savedAlbums.map((s) => s.album), seenArtistIds);
 
   // Skipping already-synced albums above only skips re-fetching their
   // metadata — `saved_at` still needs refreshing for every album in this
@@ -204,9 +224,15 @@ async function processSavedTracksPage(
   if (newAlbumIds.length > 0) {
     const albums = await fetchAlbumsByIds(newAlbumIds);
     await upsertAlbums(albums, new Map());
-    await upsertAlbumArtists(albums, seenArtistIds);
     for (const album of albums) seenAlbumIds.add(album.id);
   }
+
+  // Re-link every track's album to its artists this page touches, not just
+  // newly-fetched ones — mirrors the albums-pass fix above, for albums only
+  // ever seen via this tracks pass (referenced-but-never-directly-saved
+  // albums, which the albums pass above never visits).
+  const albumsForLinking = [...new Map(savedTracks.map(({ track }) => [track.album.id, track.album])).values()];
+  await upsertAlbumArtists(albumsForLinking, seenArtistIds);
 
   // A track whose album couldn't be fetched at all (batch and individual
   // fallback both failed) would violate the tracks.album_id FK — skip it
@@ -222,7 +248,7 @@ async function processSavedTracksPage(
   await upsertTrackArtists(syncableTracks, seenArtistIds);
 }
 
-// Spotify sometimes 403s (or 404s) an entire batch lookup when just one id in
+// Spotify sometimes 400s (or 404s) an entire batch lookup when just one id in
 // it references delisted/restricted content, instead of returning null for
 // that one id. On these statuses, bisect the batch and retry each half,
 // recursing down to individual ids only where a failure actually is — this
@@ -230,6 +256,39 @@ async function processSavedTracksPage(
 // extra request volume (and rate-limit exposure) much smaller than retrying
 // every id in the batch individually.
 const BATCH_FALLBACK_STATUSES = new Set([400, 403, 404]);
+
+// Confirmed against the real API (2026-07-26): a 403 on the plural "several
+// artists/albums" endpoint is unconditional — it happens for every id,
+// including ones the singular /artists/{id} endpoint fetches fine seconds
+// later, and doesn't vary with which ids are in the batch. So bisecting on
+// 403 (like 400/404) just re-issues the same doomed batch call at smaller
+// sizes. Instead, fall back straight to singular per-id fetches, which are
+// unaffected by whatever is blocking the plural endpoint. A ~real~ per-id
+// restriction still shows up as a 403 from the singular endpoint itself, and
+// that's what actually feeds the forbidden-skip safety net below.
+const BATCH_FORBIDDEN_STATUS = 403;
+
+// A handful of individually-skipped ids per sync (genuinely delisted/invalid
+// content, or a real per-id 403 from the singular endpoint) is normal. But a
+// sync where these pile up into the hundreds or thousands means something
+// bigger is wrong — e.g. the token/app itself losing access broadly — and
+// continuing would silently drop far more of the library than a few odd
+// ids. Once forbidden singular-fetch failures cross this threshold, abort
+// the sync instead so it surfaces as a clear sync_runs failure rather than
+// quietly missing data — a re-run resumes from whatever was already upserted.
+const MAX_FORBIDDEN_SKIPS_PER_SYNC = 20;
+let forbiddenSkipCount = 0;
+
+function recordForbiddenSkip(kind: "artist" | "album") {
+  forbiddenSkipCount += 1;
+  if (forbiddenSkipCount > MAX_FORBIDDEN_SKIPS_PER_SYNC) {
+    throw new Error(
+      `Spotify returned 403 Forbidden for ${forbiddenSkipCount} ${kind}s in this sync — this looks like ` +
+        `app-level rate limiting/throttling rather than individually restricted content. Aborting sync early ` +
+        `instead of silently dropping data; wait before retrying.`,
+    );
+  }
+}
 
 async function fetchArtistsByIds(ids: string[]): Promise<SpotifyArtist[]> {
   const artists: SpotifyArtist[] = [];
@@ -247,6 +306,10 @@ async function fetchArtistBatchBisecting(ids: string[]): Promise<SpotifyArtist[]
     return res.artists.filter((a): a is SpotifyArtist => a !== null);
   } catch (error) {
     if (!(error instanceof SpotifyApiError) || !BATCH_FALLBACK_STATUSES.has(error.status)) throw error;
+    if (error.status === BATCH_FORBIDDEN_STATUS) {
+      console.warn(`[sync] Batch artist fetch 403'd for ${ids.length} ids; falling back to singular fetches`);
+      return fetchArtistsIndividually(ids);
+    }
     if (ids.length === 1) {
       console.warn(`[sync] Skipping artist ${ids[0]} (${error.status}): ${error.message}`);
       return [];
@@ -257,6 +320,20 @@ async function fetchArtistBatchBisecting(ids: string[]): Promise<SpotifyArtist[]
     const right = await fetchArtistBatchBisecting(ids.slice(mid));
     return [...left, ...right];
   }
+}
+
+async function fetchArtistsIndividually(ids: string[]): Promise<SpotifyArtist[]> {
+  const artists: SpotifyArtist[] = [];
+  for (const id of ids) {
+    try {
+      artists.push(await spotifyFetch<SpotifyArtist>(`/artists/${id}`));
+    } catch (error) {
+      if (!(error instanceof SpotifyApiError) || !BATCH_FALLBACK_STATUSES.has(error.status)) throw error;
+      if (error.status === BATCH_FORBIDDEN_STATUS) recordForbiddenSkip("artist");
+      console.warn(`[sync] Skipping artist ${id} (${error.status}): ${error.message}`);
+    }
+  }
+  return artists;
 }
 
 async function fetchAlbumsByIds(ids: string[]): Promise<SpotifyAlbum[]> {
@@ -275,6 +352,10 @@ async function fetchAlbumBatchBisecting(ids: string[]): Promise<SpotifyAlbum[]> 
     return res.albums.filter((a): a is SpotifyAlbum => a !== null);
   } catch (error) {
     if (!(error instanceof SpotifyApiError) || !BATCH_FALLBACK_STATUSES.has(error.status)) throw error;
+    if (error.status === BATCH_FORBIDDEN_STATUS) {
+      console.warn(`[sync] Batch album fetch 403'd for ${ids.length} ids; falling back to singular fetches`);
+      return fetchAlbumsIndividually(ids);
+    }
     if (ids.length === 1) {
       console.warn(`[sync] Skipping album ${ids[0]} (${error.status}): ${error.message}`);
       return [];
@@ -285,6 +366,20 @@ async function fetchAlbumBatchBisecting(ids: string[]): Promise<SpotifyAlbum[]> 
     const right = await fetchAlbumBatchBisecting(ids.slice(mid));
     return [...left, ...right];
   }
+}
+
+async function fetchAlbumsIndividually(ids: string[]): Promise<SpotifyAlbum[]> {
+  const albums: SpotifyAlbum[] = [];
+  for (const id of ids) {
+    try {
+      albums.push(await spotifyFetch<SpotifyAlbum>(`/albums/${id}`));
+    } catch (error) {
+      if (!(error instanceof SpotifyApiError) || !BATCH_FALLBACK_STATUSES.has(error.status)) throw error;
+      if (error.status === BATCH_FORBIDDEN_STATUS) recordForbiddenSkip("album");
+      console.warn(`[sync] Skipping album ${id} (${error.status}): ${error.message}`);
+    }
+  }
+  return albums;
 }
 
 async function upsertArtists(artists: SpotifyArtist[]) {
@@ -350,7 +445,10 @@ async function updateSavedAt(entries: { id: string; savedAt: string }[]) {
   );
 }
 
-async function upsertAlbumArtists(albums: SpotifyAlbum[], knownArtistIds: Set<string>) {
+async function upsertAlbumArtists(
+  albums: { id: string; artists: SpotifySimplifiedArtist[] }[],
+  knownArtistIds: Set<string>,
+) {
   const rows = albums.flatMap((album) =>
     album.artists
       .map((artist, position) => ({
@@ -358,8 +456,11 @@ async function upsertAlbumArtists(albums: SpotifyAlbum[], knownArtistIds: Set<st
         artist_id: artist.id,
         position,
       }))
-      // An artist that failed to fetch (see BATCH_FALLBACK_STATUSES) was never
-      // upserted into `artists`, so linking to it would violate the FK.
+      // An artist not yet fetched/upserted into `artists` (still pending, or
+      // permanently unfetchable — see BATCH_FALLBACK_STATUSES) would violate
+      // the FK if linked. Safe to skip here: once the artist does land in
+      // `artists`, this same call re-runs against the full page every sync
+      // and adds the link then.
       .filter((row) => knownArtistIds.has(row.artist_id)),
   );
   if (rows.length === 0) return;
