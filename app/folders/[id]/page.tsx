@@ -34,11 +34,11 @@ export default async function FolderDetailPage({ params }: { params: Promise<{ i
       <RenameFolderForm folderId={folder.id} initialName={folder.name} />
 
       <div className="space-y-2">
-        <h2 className="text-sm font-semibold text-muted-foreground">Tracks</h2>
-        <ul className="divide-y rounded-md border">
+        <h2 className="text-xs font-bold tracking-wide text-muted-foreground uppercase">Tracks</h2>
+        <ul className="overflow-hidden rounded-lg bg-card/60">
           {(tracks ?? []).map((track) => (
-            <li key={track.id} className="flex items-center justify-between px-4 py-2 text-sm">
-              <span>
+            <li key={track.id} className="flex items-center justify-between px-4 py-2 text-sm hover:bg-white/10">
+              <span className="text-white">
                 {track.name}
                 {track.albums?.name ? ` — ${track.albums.name}` : ""}
               </span>
@@ -52,11 +52,11 @@ export default async function FolderDetailPage({ params }: { params: Promise<{ i
       </div>
 
       <div className="space-y-2">
-        <h2 className="text-sm font-semibold text-muted-foreground">Albums</h2>
-        <ul className="divide-y rounded-md border">
+        <h2 className="text-xs font-bold tracking-wide text-muted-foreground uppercase">Albums</h2>
+        <ul className="overflow-hidden rounded-lg bg-card/60">
           {(albums ?? []).map((album) => (
-            <li key={album.id} className="flex items-center justify-between px-4 py-2 text-sm">
-              <span>{album.name}</span>
+            <li key={album.id} className="flex items-center justify-between px-4 py-2 text-sm hover:bg-white/10">
+              <span className="text-white">{album.name}</span>
               <RemoveFromFolderButton folderId={folder.id} itemType="album" itemId={album.id} />
             </li>
           ))}

@@ -17,12 +17,12 @@ export default async function FoldersPage() {
 
   return (
     <div className="mx-auto w-full max-w-2xl flex-1 space-y-6 px-6 py-6">
-      <h1 className="text-lg font-semibold">Folders</h1>
+      <h1 className="font-heading text-2xl font-extrabold tracking-tight text-white">Folders</h1>
       <CreateFolderForm />
-      <ul className="divide-y rounded-md border">
+      <ul className="overflow-hidden rounded-lg bg-card/60">
         {(folders ?? []).map((folder) => (
-          <li key={folder.id} className="flex items-center justify-between px-4 py-3">
-            <Link href={`/folders/${folder.id}`} className="font-medium hover:underline">
+          <li key={folder.id} className="flex items-center justify-between px-4 py-3 hover:bg-white/10">
+            <Link href={`/folders/${folder.id}`} className="font-heading font-semibold text-white hover:underline">
               {folder.name}
             </Link>
             <div className="flex items-center gap-3 text-sm text-muted-foreground">

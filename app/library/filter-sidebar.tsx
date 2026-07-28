@@ -1,7 +1,8 @@
 "use client";
 
-import { useCallback, useMemo, useRef } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { ChevronLeft, SlidersHorizontal } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -52,6 +53,7 @@ export function LibraryFilterSidebar({
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [collapsed, setCollapsed] = useState(false);
 
   const folderNames = useMemo(() => new Map(folders.map((f) => [f.id, f.name])), [folders]);
   const tagNames = useMemo(() => new Map(tags.map((t) => [t.id, t.name])), [tags]);
@@ -86,18 +88,46 @@ export function LibraryFilterSidebar({
     return Number.isFinite(n) ? Math.round(n * 60_000) : undefined;
   }
 
-  return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <h2 className="text-sm font-semibold">Filters</h2>
-        <Button
-          variant="ghost"
-          size="sm"
-          className="h-auto p-0 text-xs text-muted-foreground"
-          onClick={() => router.push(`${pathname}?view=${filters.view}`)}
+  if (collapsed) {
+    return (
+      <div className="w-14">
+        <button
+          type="button"
+          onClick={() => setCollapsed(false)}
+          aria-label="Expand filters"
+          className="flex w-full flex-col items-center gap-2 rounded-lg bg-card/60 py-4 text-muted-foreground transition-colors hover:text-white"
         >
-          Reset
-        </Button>
+          <SlidersHorizontal className="size-5" />
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="w-64 space-y-6 rounded-lg bg-card/60 p-4">
+      <div className="flex items-center justify-between">
+        <h2 className="text-xs font-bold tracking-wide text-white uppercase">Filters</h2>
+        <div className="flex items-center gap-3">
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-auto rounded-full p-0 text-xs font-semibold text-muted-foreground hover:bg-transparent hover:text-white hover:underline"
+            onClick={() => {
+              const display = searchParams.get("display");
+              router.push(`${pathname}?view=${filters.view}${display === "grid" ? "&display=grid" : ""}`);
+            }}
+          >
+            Reset
+          </Button>
+          <button
+            type="button"
+            onClick={() => setCollapsed(true)}
+            aria-label="Collapse filters"
+            className="text-muted-foreground transition-colors hover:text-white"
+          >
+            <ChevronLeft className="size-4" />
+          </button>
+        </div>
       </div>
 
       <div className="space-y-2">
@@ -107,6 +137,7 @@ export function LibraryFilterSidebar({
           key={filters.q ?? ""}
           defaultValue={filters.q ?? ""}
           placeholder="Track, album, or artist…"
+          className="rounded-full bg-white/10 pl-3.5"
           onChange={(e) => applyDebounced({ q: e.target.value || undefined })}
         />
       </div>

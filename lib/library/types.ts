@@ -1,4 +1,5 @@
 export type LibraryView = "tracks" | "albums";
+export type LibraryDisplay = "list" | "grid";
 export type AlbumType = "album" | "single" | "compilation";
 
 export type SortKey = "saved_at" | "name" | "popularity" | "release_date";

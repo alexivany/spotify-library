@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { FolderPlus, TagPlus, type LucideIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -24,21 +25,44 @@ function AssignmentPopover({
   options,
   selectedIds,
   onToggle,
+  icon: Icon,
+  iconOnly,
 }: {
   label: string;
   emptyLabel: string;
   options: NamedItem[];
   selectedIds: Set<string>;
   onToggle: (id: string) => void;
+  icon: LucideIcon;
+  iconOnly?: boolean;
 }) {
+  const count = selectedIds.size;
+
   return (
     <Popover>
       <PopoverTrigger
         render={
-          <Button variant="outline" size="xs">
-            {label}
-            {selectedIds.size > 0 ? ` (${selectedIds.size})` : ""}
-          </Button>
+          iconOnly ? (
+            <Button
+              variant="outline"
+              size="icon-sm"
+              className="relative"
+              aria-label={count > 0 ? `${label} (${count})` : label}
+              title={label}
+            >
+              <Icon className="size-3.5" />
+              {count > 0 && (
+                <span className="absolute -top-1.5 -right-1.5 flex size-4 items-center justify-center rounded-full bg-primary text-[10px] leading-none font-bold text-primary-foreground">
+                  {count}
+                </span>
+              )}
+            </Button>
+          ) : (
+            <Button variant="outline" size="xs">
+              {label}
+              {count > 0 ? ` (${count})` : ""}
+            </Button>
+          )
         }
       />
       <PopoverContent className="w-56" align="end">
@@ -63,6 +87,7 @@ export function ItemActions({
   tags,
   initialFolderIds,
   initialTagIds,
+  iconOnly,
 }: {
   itemType: "track" | "album";
   itemId: string;
@@ -70,6 +95,7 @@ export function ItemActions({
   tags: NamedItem[];
   initialFolderIds: string[];
   initialTagIds: string[];
+  iconOnly?: boolean;
 }) {
   const [folderIds, setFolderIds] = useState(new Set(initialFolderIds));
   const [tagIds, setTagIds] = useState(new Set(initialTagIds));
@@ -110,6 +136,8 @@ export function ItemActions({
         options={folders}
         selectedIds={folderIds}
         onToggle={toggleFolder}
+        icon={FolderPlus}
+        iconOnly={iconOnly}
       />
       <AssignmentPopover
         label="Tags"
@@ -117,6 +145,8 @@ export function ItemActions({
         options={tags}
         selectedIds={tagIds}
         onToggle={toggleTag}
+        icon={TagPlus}
+        iconOnly={iconOnly}
       />
     </div>
   );

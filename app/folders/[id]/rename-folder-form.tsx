@@ -28,7 +28,7 @@ export function RenameFolderForm({ folderId, initialName }: { folderId: string; 
 
   return (
     <form onSubmit={handleSubmit} className="flex items-center gap-2">
-      <Input value={name} onChange={(e) => setName(e.target.value)} className="max-w-xs text-lg font-semibold" />
+      <Input value={name} onChange={(e) => setName(e.target.value)} className="max-w-xs font-heading text-lg font-semibold" />
       <Button type="submit" size="sm" variant="outline" disabled={pending || !name.trim() || name === initialName}>
         Rename
       </Button>
