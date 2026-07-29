@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { buildSearchParams } from "@/lib/library/url";
+import { PageJump } from "./page-jump";
 
 export function LibraryPagination({
   page,
@@ -21,9 +22,10 @@ export function LibraryPagination({
 
   return (
     <div className="flex items-center justify-between text-sm text-muted-foreground">
-      <span>
-        {total === 0 ? "0 results" : `${total} results · page ${page} of ${totalPages}`}
-      </span>
+      <div className="flex items-center gap-1.5">
+        <span>{total === 0 ? "0 results" : `${total} results ·`}</span>
+        {total > 0 && (totalPages > 1 ? <PageJump key={page} page={page} totalPages={totalPages} /> : <span>page 1 of 1</span>)}
+      </div>
       <div className="flex gap-2">
         {hasPrev ? (
           <Link href={prevHref} className={buttonVariants({ variant: "outline", size: "sm" })}>

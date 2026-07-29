@@ -55,6 +55,13 @@ export type Database = {
             foreignKeyName: "album_artists_album_id_fkey"
             columns: ["album_id"]
             isOneToOne: false
+            referencedRelation: "album_genres"
+            referencedColumns: ["album_id"]
+          },
+          {
+            foreignKeyName: "album_artists_album_id_fkey"
+            columns: ["album_id"]
+            isOneToOne: false
             referencedRelation: "albums"
             referencedColumns: ["id"]
           },
@@ -73,11 +80,19 @@ export type Database = {
           id: string
           image_url: string | null
           label: string | null
+          musicbrainz_checked_at: string | null
+          musicbrainz_genres: string[]
+          musicbrainz_label: string | null
+          musicbrainz_match_score: number | null
+          musicbrainz_match_status: string | null
+          musicbrainz_release_group_id: string | null
+          musicbrainz_release_id: string | null
           name: string
           popularity: number | null
           raw: Json
           release_date: string | null
           release_date_precision: string | null
+          resolved_label: string | null
           saved_at: string | null
           total_tracks: number | null
           upc: string | null
@@ -88,11 +103,19 @@ export type Database = {
           id: string
           image_url?: string | null
           label?: string | null
+          musicbrainz_checked_at?: string | null
+          musicbrainz_genres?: string[]
+          musicbrainz_label?: string | null
+          musicbrainz_match_score?: number | null
+          musicbrainz_match_status?: string | null
+          musicbrainz_release_group_id?: string | null
+          musicbrainz_release_id?: string | null
           name: string
           popularity?: number | null
           raw?: Json
           release_date?: string | null
           release_date_precision?: string | null
+          resolved_label?: string | null
           saved_at?: string | null
           total_tracks?: number | null
           upc?: string | null
@@ -103,11 +126,19 @@ export type Database = {
           id?: string
           image_url?: string | null
           label?: string | null
+          musicbrainz_checked_at?: string | null
+          musicbrainz_genres?: string[]
+          musicbrainz_label?: string | null
+          musicbrainz_match_score?: number | null
+          musicbrainz_match_status?: string | null
+          musicbrainz_release_group_id?: string | null
+          musicbrainz_release_id?: string | null
           name?: string
           popularity?: number | null
           raw?: Json
           release_date?: string | null
           release_date_precision?: string | null
+          resolved_label?: string | null
           saved_at?: string | null
           total_tracks?: number | null
           upc?: string | null
@@ -145,6 +176,33 @@ export type Database = {
           popularity?: number | null
           raw?: Json
           updated_at?: string
+        }
+        Relationships: []
+      }
+      enrichment_runs: {
+        Row: {
+          counts: Json
+          error: string | null
+          finished_at: string | null
+          id: string
+          started_at: string
+          status: string
+        }
+        Insert: {
+          counts?: Json
+          error?: string | null
+          finished_at?: string | null
+          id?: string
+          started_at?: string
+          status?: string
+        }
+        Update: {
+          counts?: Json
+          error?: string | null
+          finished_at?: string | null
+          id?: string
+          started_at?: string
+          status?: string
         }
         Relationships: []
       }
@@ -300,6 +358,13 @@ export type Database = {
             foreignKeyName: "track_artists_track_id_fkey"
             columns: ["track_id"]
             isOneToOne: false
+            referencedRelation: "track_genres"
+            referencedColumns: ["track_id"]
+          },
+          {
+            foreignKeyName: "track_artists_track_id_fkey"
+            columns: ["track_id"]
+            isOneToOne: false
             referencedRelation: "tracks"
             referencedColumns: ["id"]
           },
@@ -356,6 +421,13 @@ export type Database = {
             foreignKeyName: "tracks_album_id_fkey"
             columns: ["album_id"]
             isOneToOne: false
+            referencedRelation: "album_genres"
+            referencedColumns: ["album_id"]
+          },
+          {
+            foreignKeyName: "tracks_album_id_fkey"
+            columns: ["album_id"]
+            isOneToOne: false
             referencedRelation: "albums"
             referencedColumns: ["id"]
           },
@@ -368,30 +440,14 @@ export type Database = {
           album_id: string | null
           genres: string[] | null
         }
-        Relationships: [
-          {
-            foreignKeyName: "album_artists_album_id_fkey"
-            columns: ["album_id"]
-            isOneToOne: false
-            referencedRelation: "albums"
-            referencedColumns: ["id"]
-          },
-        ]
+        Relationships: []
       }
       track_genres: {
         Row: {
           genres: string[] | null
           track_id: string | null
         }
-        Relationships: [
-          {
-            foreignKeyName: "track_artists_track_id_fkey"
-            columns: ["track_id"]
-            isOneToOne: false
-            referencedRelation: "tracks"
-            referencedColumns: ["id"]
-          },
-        ]
+        Relationships: []
       }
     }
     Functions: {

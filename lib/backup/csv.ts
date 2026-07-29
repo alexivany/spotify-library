@@ -15,6 +15,7 @@ const BACKUP_TABLES: (keyof Database["public"]["Tables"])[] = [
   "tags",
   "item_tags",
   "sync_runs",
+  "enrichment_runs",
 ];
 
 const PAGE_SIZE = 1000;

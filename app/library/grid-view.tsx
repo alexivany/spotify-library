@@ -1,7 +1,8 @@
 import Image from "next/image";
 import type { LibraryAlbumItem, LibraryTrackItem, LibraryView } from "@/lib/library/types";
-import { ItemActions } from "./item-actions";
 import { ArtistNames, ExplicitTag } from "./results-table";
+import { LibraryCardMenu } from "./item-context-menu";
+import { buildAlbumMenuData, buildTrackMenuData } from "@/lib/library/menu-data";
 
 interface NamedItem {
   id: string;
@@ -49,7 +50,7 @@ export function GridView({
   }
 
   return (
-    <div className="flex flex-wrap gap-5">
+    <div className="grid grid-cols-[repeat(auto-fill,minmax(11rem,1fr))] gap-5">
       {items.map((item) => {
         const track = view === "tracks" ? (item as LibraryTrackItem) : null;
         const album = view === "albums" ? (item as LibraryAlbumItem) : null;
@@ -58,10 +59,19 @@ export function GridView({
           ? (track.album?.name ?? "—")
           : `${album?.total_tracks ?? "—"} track${album?.total_tracks === 1 ? "" : "s"}`;
 
+        const menuData = track ? buildTrackMenuData(track) : buildAlbumMenuData(album!);
+
         return (
-          <div
+          <LibraryCardMenu
             key={item.id}
-            className="group min-w-0 grow shrink basis-44 space-y-2 rounded-lg p-3 transition-colors hover:bg-white/5 max-w-96"
+            itemType={track ? "track" : "album"}
+            itemId={item.id}
+            folders={folders}
+            tags={tags}
+            initialFolderIds={itemFolderIds.get(item.id) ?? []}
+            initialTagIds={itemTagIds.get(item.id) ?? []}
+            {...menuData}
+            className="group min-w-0 space-y-2 rounded-lg p-3 transition-colors hover:bg-white/5"
           >
             <GridCoverImage url={coverUrl} alt={item.name} />
             <div className="space-y-0.5">
@@ -74,16 +84,7 @@ export function GridView({
               </p>
               <p className="truncate text-xs text-muted-foreground">{subtitle}</p>
             </div>
-            <ItemActions
-              itemType={track ? "track" : "album"}
-              itemId={item.id}
-              folders={folders}
-              tags={tags}
-              initialFolderIds={itemFolderIds.get(item.id) ?? []}
-              initialTagIds={itemTagIds.get(item.id) ?? []}
-              iconOnly
-            />
-          </div>
+          </LibraryCardMenu>
         );
       })}
     </div>

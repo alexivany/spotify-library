@@ -10,6 +10,8 @@ import {
 import { formatDate, formatDuration } from "@/lib/library/format";
 import type { LibraryAlbumItem, LibraryTrackItem, LibraryView } from "@/lib/library/types";
 import { ItemActions } from "./item-actions";
+import { LibraryRowMenu } from "./item-context-menu";
+import { buildAlbumMenuData, buildTrackMenuData } from "@/lib/library/menu-data";
 
 interface NamedItem {
   id: string;
@@ -88,7 +90,16 @@ export function ResultsTable({
           </TableHeader>
           <TableBody>
             {tracks.map((track) => (
-              <TableRow key={track.id}>
+              <LibraryRowMenu
+                key={track.id}
+                itemType="track"
+                itemId={track.id}
+                folders={folders}
+                tags={tags}
+                initialFolderIds={itemFolderIds.get(track.id) ?? []}
+                initialTagIds={itemTagIds.get(track.id) ?? []}
+                {...buildTrackMenuData(track)}
+              >
                 <TableCell>
                   <CoverImage url={track.album?.image_url ?? null} alt={track.album?.name ?? track.name} />
                 </TableCell>
@@ -117,7 +128,7 @@ export function ResultsTable({
                     iconOnly
                   />
                 </TableCell>
-              </TableRow>
+              </LibraryRowMenu>
             ))}
           </TableBody>
         </Table>
@@ -144,7 +155,16 @@ export function ResultsTable({
         </TableHeader>
         <TableBody>
           {albums.map((album) => (
-            <TableRow key={album.id}>
+            <LibraryRowMenu
+              key={album.id}
+              itemType="album"
+              itemId={album.id}
+              folders={folders}
+              tags={tags}
+              initialFolderIds={itemFolderIds.get(album.id) ?? []}
+              initialTagIds={itemTagIds.get(album.id) ?? []}
+              {...buildAlbumMenuData(album)}
+            >
               <TableCell>
                 <CoverImage url={album.image_url} alt={album.name} />
               </TableCell>
@@ -168,7 +188,7 @@ export function ResultsTable({
                   iconOnly
                 />
               </TableCell>
-            </TableRow>
+            </LibraryRowMenu>
           ))}
         </TableBody>
       </Table>

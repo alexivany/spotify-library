@@ -41,6 +41,9 @@ yarn-error.log*
 # csv backups (see lib/backup/csv.ts)
 /backups
 
+# scratch/plan notes
+/tmp
+
 # vercel
 .vercel
 

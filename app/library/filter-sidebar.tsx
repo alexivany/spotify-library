@@ -145,6 +145,24 @@ export function LibraryFilterSidebar({
       <Separator />
 
       <div className="space-y-2">
+        <Label>Sort by</Label>
+        <Select value={filters.sort} onValueChange={(value) => apply({ sort: value })}>
+          <SelectTrigger className="w-full">
+            <SelectValue>{(value: string) => sortLabels.get(value) ?? value}</SelectValue>
+          </SelectTrigger>
+          <SelectContent>
+            {SORT_OPTIONS.map((option) => (
+              <SelectItem key={option.value} value={option.value}>
+                {option.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
+
+      <Separator />
+
+      <div className="space-y-2">
         <Label>Content type</Label>
         <div className="space-y-1.5">
           {ALBUM_TYPES.map((type) => (
@@ -354,24 +372,6 @@ export function LibraryFilterSidebar({
             {tags.map((tag) => (
               <SelectItem key={tag.id} value={tag.id}>
                 {tag.name}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      </div>
-
-      <Separator />
-
-      <div className="space-y-2">
-        <Label>Sort by</Label>
-        <Select value={filters.sort} onValueChange={(value) => apply({ sort: value })}>
-          <SelectTrigger className="w-full">
-            <SelectValue>{(value: string) => sortLabels.get(value) ?? value}</SelectValue>
-          </SelectTrigger>
-          <SelectContent>
-            {SORT_OPTIONS.map((option) => (
-              <SelectItem key={option.value} value={option.value}>
-                {option.label}
               </SelectItem>
             ))}
           </SelectContent>

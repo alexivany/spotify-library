@@ -6,12 +6,12 @@ import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 
-interface NamedItem {
+export interface NamedItem {
   id: string;
   name: string;
 }
 
-async function postAssignment(url: string, method: "POST" | "DELETE", body: Record<string, string>) {
+export async function postAssignment(url: string, method: "POST" | "DELETE", body: Record<string, string>) {
   await fetch(url, {
     method,
     headers: { "Content-Type": "application/json" },

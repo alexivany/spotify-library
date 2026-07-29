@@ -180,14 +180,14 @@ async function queryTracks(filters: LibraryFilters): Promise<LibraryQueryResult<
     .from("tracks")
     .select(
       `id,name,duration_ms,explicit,popularity,saved_at,preview_url,
-       albums!inner(id,name,album_type,release_date,label,image_url),
+       albums!inner(id,name,album_type,release_date,resolved_label,image_url),
        track_artists(position,artists(id,name))`,
       { count: "exact" },
     )
     .not("saved_at", "is", null);
 
   if (filters.albumTypes.length > 0) query = query.in("albums.album_type", filters.albumTypes);
-  if (filters.label) query = query.ilike("albums.label", `%${escapeIlike(filters.label)}%`);
+  if (filters.label) query = query.ilike("albums.resolved_label", `%${escapeIlike(filters.label)}%`);
   if (filters.releaseFrom) query = query.gte("albums.release_date", filters.releaseFrom);
   if (filters.releaseTo) query = query.lte("albums.release_date", filters.releaseTo);
   if (filters.explicit !== undefined) query = query.eq("explicit", filters.explicit);
@@ -229,7 +229,7 @@ async function queryTracks(filters: LibraryFilters): Promise<LibraryQueryResult<
           name: row.albums.name,
           album_type: row.albums.album_type,
           release_date: row.albums.release_date,
-          label: row.albums.label,
+          label: row.albums.resolved_label,
           image_url: row.albums.image_url,
         }
       : null,
@@ -249,14 +249,14 @@ async function queryAlbums(filters: LibraryFilters): Promise<LibraryQueryResult<
   let query = supabase
     .from("albums")
     .select(
-      `id,name,album_type,release_date,release_date_precision,label,total_tracks,popularity,image_url,saved_at,
+      `id,name,album_type,release_date,release_date_precision,resolved_label,total_tracks,popularity,image_url,saved_at,
        album_artists(position,artists(id,name))`,
       { count: "exact" },
     )
     .not("saved_at", "is", null);
 
   if (filters.albumTypes.length > 0) query = query.in("album_type", filters.albumTypes);
-  if (filters.label) query = query.ilike("label", `%${escapeIlike(filters.label)}%`);
+  if (filters.label) query = query.ilike("resolved_label", `%${escapeIlike(filters.label)}%`);
   if (filters.releaseFrom) query = query.gte("release_date", filters.releaseFrom);
   if (filters.releaseTo) query = query.lte("release_date", filters.releaseTo);
   if (filters.popularityMin !== undefined) query = query.gte("popularity", filters.popularityMin);
@@ -284,7 +284,7 @@ async function queryAlbums(filters: LibraryFilters): Promise<LibraryQueryResult<
     album_type: row.album_type,
     release_date: row.release_date,
     release_date_precision: row.release_date_precision,
-    label: row.label,
+    label: row.resolved_label,
     total_tracks: row.total_tracks,
     popularity: row.popularity,
     image_url: row.image_url,
@@ -301,11 +301,19 @@ async function queryAlbums(filters: LibraryFilters): Promise<LibraryQueryResult<
 
 export async function getAvailableGenres(): Promise<string[]> {
   const supabase = getSupabaseServerClient();
-  const { data, error } = await supabase.from("artists").select("genres");
-  if (error) throw new Error(`Failed to load genres: ${error.message}`);
+  const [artistGenres, albumGenres] = await Promise.all([
+    supabase.from("artists").select("genres"),
+    supabase.from("albums").select("musicbrainz_genres").not("saved_at", "is", null),
+  ]);
+  if (artistGenres.error) throw new Error(`Failed to load genres: ${artistGenres.error.message}`);
+  if (albumGenres.error) throw new Error(`Failed to load genres: ${albumGenres.error.message}`);
+
   const genres = new Set<string>();
-  for (const row of data ?? []) {
+  for (const row of artistGenres.data ?? []) {
     for (const genre of row.genres ?? []) genres.add(genre);
+  }
+  for (const row of albumGenres.data ?? []) {
+    for (const genre of row.musicbrainz_genres ?? []) genres.add(genre);
   }
   return [...genres].sort();
 }
@@ -314,13 +322,13 @@ export async function getAvailableLabels(): Promise<string[]> {
   const supabase = getSupabaseServerClient();
   const { data, error } = await supabase
     .from("albums")
-    .select("label")
-    .not("label", "is", null)
+    .select("resolved_label")
+    .not("resolved_label", "is", null)
     .not("saved_at", "is", null);
   if (error) throw new Error(`Failed to load labels: ${error.message}`);
   const labels = new Set<string>();
   for (const row of data ?? []) {
-    if (row.label) labels.add(row.label);
+    if (row.resolved_label) labels.add(row.resolved_label);
   }
   return [...labels].sort();
 }

@@ -2,17 +2,92 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Library, FolderClosed, Tag } from "lucide-react";
+import { useState } from "react";
+import { ChevronRight, FolderClosed, Library, Tag as TagIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
+import type { Tables } from "@/lib/supabase/types";
+import { LIBRARY_ITEM_MIME, type LibraryItemDragPayload } from "@/lib/library/drag";
 
-const NAV_ITEMS = [
-  { href: "/library", label: "Your Library", icon: Library },
-  { href: "/folders", label: "Folders", icon: FolderClosed },
-  { href: "/tags", label: "Tags", icon: Tag },
-];
+type Folder = Pick<Tables<"folders">, "id" | "name">;
+type Tag = Pick<Tables<"tags">, "id" | "name">;
 
-export function Sidebar() {
+interface NavSection {
+  key: string;
+  href: string;
+  label: string;
+  icon: typeof FolderClosed;
+  items: (Folder | Tag)[];
+  itemHref: (item: Folder | Tag) => string;
+  dropUrl: string;
+  dropKey: "folderId" | "tagId";
+}
+
+function isLibraryItemDrag(e: React.DragEvent) {
+  return e.dataTransfer.types.includes(LIBRARY_ITEM_MIME);
+}
+
+export function Sidebar({ folders, tags }: { folders: Folder[]; tags: Tag[] }) {
   const pathname = usePathname();
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [dragOverTarget, setDragOverTarget] = useState<string | null>(null);
+  const [justAdded, setJustAdded] = useState<string | null>(null);
+
+  function toggle(key: string) {
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) {
+        next.delete(key);
+      } else {
+        next.add(key);
+      }
+      return next;
+    });
+  }
+
+  function expand(key: string) {
+    setExpanded((prev) => (prev.has(key) ? prev : new Set(prev).add(key)));
+  }
+
+  async function handleDrop(e: React.DragEvent, section: NavSection, targetId: string, targetKey: string) {
+    e.preventDefault();
+    setDragOverTarget(null);
+    const raw = e.dataTransfer.getData(LIBRARY_ITEM_MIME);
+    if (!raw) return;
+    const payload = JSON.parse(raw) as LibraryItemDragPayload;
+
+    await fetch(section.dropUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ [section.dropKey]: targetId, itemType: payload.itemType, itemId: payload.itemId }),
+    }).catch(() => null);
+
+    setJustAdded(targetKey);
+    setTimeout(() => setJustAdded((current) => (current === targetKey ? null : current)), 1200);
+  }
+
+  const sections: NavSection[] = [
+    {
+      key: "folders",
+      href: "/folders",
+      label: "Folders",
+      icon: FolderClosed,
+      items: folders,
+      itemHref: (folder) => `/folders/${folder.id}`,
+      dropUrl: "/api/items/folders",
+      dropKey: "folderId",
+    },
+    {
+      key: "tags",
+      href: "/tags",
+      label: "Tags",
+      icon: TagIcon,
+      items: tags,
+      itemHref: (tag) => `/library?tag=${tag.id}`,
+      dropUrl: "/api/items/tags",
+      dropKey: "tagId",
+    },
+  ];
+
   return (
     <aside className="flex w-60 shrink-0 flex-col gap-2 bg-sidebar p-2">
       <div className="rounded-lg bg-[#121212] px-4 py-4">
@@ -29,20 +104,84 @@ export function Sidebar() {
       </div>
 
       <nav className="flex flex-col gap-1 rounded-lg bg-[#121212] p-2">
-        {NAV_ITEMS.map(({ href, label, icon: Icon }) => {
-          const active = pathname === href || pathname.startsWith(`${href}/`);
+        <Link
+          href="/library"
+          className={cn(
+            "flex items-center gap-4 rounded-md px-3 py-2.5 font-heading text-sm font-bold transition-colors hover:text-white",
+            pathname === "/library" ? "bg-sidebar-accent text-white" : "text-sidebar-foreground",
+          )}
+        >
+          <Library className="size-5 shrink-0" strokeWidth={pathname === "/library" ? 2.5 : 2} />
+          Your Library
+        </Link>
+
+        {sections.map((section) => {
+          const active = pathname === section.href || pathname.startsWith(`${section.href}/`);
+          const isExpanded = expanded.has(section.key);
+          const Icon = section.icon;
           return (
-            <Link
-              key={href}
-              href={href}
-              className={cn(
-                "flex items-center gap-4 rounded-md px-3 py-2.5 font-heading text-sm font-bold transition-colors hover:text-white",
-                active ? "bg-sidebar-accent text-white" : "text-sidebar-foreground",
+            <div key={section.key}>
+              <div
+                className="flex items-center"
+                onDragEnter={(e) => {
+                  if (isLibraryItemDrag(e)) expand(section.key);
+                }}
+              >
+                <Link
+                  href={section.href}
+                  className={cn(
+                    "flex flex-1 items-center gap-4 rounded-md px-3 py-2.5 font-heading text-sm font-bold transition-colors hover:text-white",
+                    active ? "bg-sidebar-accent text-white" : "text-sidebar-foreground",
+                  )}
+                >
+                  <Icon className="size-5 shrink-0" strokeWidth={active ? 2.5 : 2} />
+                  {section.label}
+                </Link>
+                <button
+                  type="button"
+                  onClick={() => toggle(section.key)}
+                  aria-label={`${isExpanded ? "Collapse" : "Expand"} ${section.label}`}
+                  aria-expanded={isExpanded}
+                  className="rounded-md p-2 text-sidebar-foreground transition-colors hover:text-white"
+                >
+                  <ChevronRight className={cn("size-4 transition-transform", isExpanded && "rotate-90")} />
+                </button>
+              </div>
+              {isExpanded && (
+                <div className="mt-1 ml-4 flex flex-col gap-0.5 border-l border-white/10 py-0.5 pl-4">
+                  {section.items.length === 0 ? (
+                    <p className="px-2 py-1 text-xs text-muted-foreground">Nothing yet</p>
+                  ) : (
+                    section.items.map((item) => {
+                      const targetKey = `${section.key}:${item.id}`;
+                      return (
+                        <Link
+                          key={item.id}
+                          href={section.itemHref(item)}
+                          onDragOver={(e) => {
+                            if (!isLibraryItemDrag(e)) return;
+                            e.preventDefault();
+                            e.dataTransfer.dropEffect = "copy";
+                            if (dragOverTarget !== targetKey) setDragOverTarget(targetKey);
+                          }}
+                          onDragLeave={() => {
+                            setDragOverTarget((current) => (current === targetKey ? null : current));
+                          }}
+                          onDrop={(e) => handleDrop(e, section, item.id, targetKey)}
+                          className={cn(
+                            "truncate rounded-md px-2 py-1 text-xs font-medium text-sidebar-foreground transition-colors hover:text-white",
+                            dragOverTarget === targetKey && "bg-primary/20 text-white ring-1 ring-primary",
+                            justAdded === targetKey && "bg-emerald-500/20 text-white",
+                          )}
+                        >
+                          {item.name}
+                        </Link>
+                      );
+                    })
+                  )}
+                </div>
               )}
-            >
-              <Icon className="size-5 shrink-0" strokeWidth={active ? 2.5 : 2} />
-              {label}
-            </Link>
+            </div>
           );
         })}
       </nav>
