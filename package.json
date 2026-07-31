@@ -3,7 +3,12 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev -H 127.0.0.1",
+    "dev": "bash scripts/dev.sh",
+    "dev:next": "next dev -H 127.0.0.1",
+    "dev:fresh": "bash scripts/setup-local-db.sh && supabase db reset && bun run dev:next",
+    "db:setup": "bash scripts/setup-local-db.sh",
+    "db:restore": "bun scripts/restore-backup.ts",
+    "update-types": "supabase gen types typescript --local > lib/supabase/types.ts",
     "build": "next build",
     "start": "next start",
     "lint": "eslint"

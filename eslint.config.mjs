@@ -12,6 +12,8 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Generated Supabase artifacts (edge-runtime bundles, etc.) — not our source.
+    "supabase/.temp/**",
   ]),
 ]);
 
