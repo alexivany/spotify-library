@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { runSync } from "@/lib/spotify/sync";
 
-export async function POST(request: NextRequest) {
+async function handle(request: NextRequest) {
   const cronSecret = process.env.CRON_SECRET;
   if (!cronSecret) {
     return NextResponse.json({ error: "CRON_SECRET is not configured" }, { status: 500 });
@@ -22,3 +22,8 @@ export async function POST(request: NextRequest) {
     );
   }
 }
+
+// Vercel Cron invokes via GET and attaches `Authorization: Bearer <CRON_SECRET>`
+// when the CRON_SECRET env var is set. POST is kept for manual/scripted triggers.
+export const GET = handle;
+export const POST = handle;

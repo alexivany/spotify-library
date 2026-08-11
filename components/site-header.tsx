@@ -1,6 +1,8 @@
+import { LogOut } from "lucide-react";
 import { getSupabaseServerClient } from "@/lib/supabase/server";
 import { SyncButton } from "@/components/sync-button";
 import { EnrichButton } from "@/components/enrich-button";
+import { Button } from "@/components/ui/button";
 
 function formatSyncCounts(counts: unknown): string | null {
   if (!counts || typeof counts !== "object") return null;
@@ -55,6 +57,11 @@ export async function SiteHeader() {
       <div className="flex items-center gap-2">
         <EnrichButton />
         <SyncButton />
+        <form action="/api/auth/logout" method="post">
+          <Button type="submit" variant="ghost" size="icon" aria-label="Sign out">
+            <LogOut />
+          </Button>
+        </form>
       </div>
     </header>
   );

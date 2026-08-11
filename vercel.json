@@ -1,0 +1,11 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "crons": [
+    { "path": "/api/cron/sync", "schedule": "0 7 * * *" },
+    { "path": "/api/cron/musicbrainz", "schedule": "0 8 * * *" }
+  ],
+  "functions": {
+    "app/api/cron/sync/route.ts": { "maxDuration": 60 },
+    "app/api/cron/musicbrainz/route.ts": { "maxDuration": 60 }
+  }
+}
