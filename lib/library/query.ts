@@ -75,18 +75,6 @@ function escapeIlike(value: string): string {
   return value.replace(/[%_]/g, (c) => `\\${c}`);
 }
 
-async function resolveGenreIds(view: LibraryView, genres: string[]): Promise<string[]> {
-  const supabase = getSupabaseServerClient();
-  if (view === "tracks") {
-    const { data, error } = await supabase.from("track_genres").select("track_id").overlaps("genres", genres);
-    if (error) throw new Error(`Failed to resolve genre filter: ${error.message}`);
-    return (data ?? []).map((row) => row.track_id).filter((id): id is string => id !== null);
-  }
-  const { data, error } = await supabase.from("album_genres").select("album_id").overlaps("genres", genres);
-  if (error) throw new Error(`Failed to resolve genre filter: ${error.message}`);
-  return (data ?? []).map((row) => row.album_id).filter((id): id is string => id !== null);
-}
-
 async function resolveFolderIds(view: LibraryView, folderId: string): Promise<string[]> {
   const supabase = getSupabaseServerClient();
   const itemType = view === "tracks" ? "track" : "album";
@@ -156,11 +144,16 @@ export async function queryLibrary(
   return filters.view === "tracks" ? queryTracks(filters) : queryAlbums(filters);
 }
 
+// Genre is deliberately NOT resolved here. The album_genres/track_genres views
+// union artists.genres with albums.musicbrainz_genres, but Spotify deprecated
+// artist genres so that half is permanently empty — genres come only from
+// albums.musicbrainz_genres. Resolving genre to an id list and passing it via
+// `.in("id", ...)` overflowed PostgREST's URI length limit ("URI too long")
+// once enrichment populated genres for thousands of albums. Instead each query
+// builder filters musicbrainz_genres directly with `overlaps` (a column
+// predicate, ANDed server-side), which composes with these id filters.
 async function resolveIdFilter(filters: LibraryFilters): Promise<string[] | undefined> {
   let ids: string[] | undefined;
-  if (filters.genres.length > 0) {
-    ids = await intersectIdFilter(ids, () => resolveGenreIds(filters.view, filters.genres));
-  }
   if (filters.folderId) {
     ids = await intersectIdFilter(ids, () => resolveFolderIds(filters.view, filters.folderId!));
   }
@@ -197,6 +190,7 @@ async function queryTracks(filters: LibraryFilters): Promise<LibraryQueryResult<
   if (filters.durationMaxMs !== undefined) query = query.lte("duration_ms", filters.durationMaxMs);
   if (filters.savedFrom) query = query.gte("saved_at", filters.savedFrom);
   if (filters.savedTo) query = query.lte("saved_at", filters.savedTo);
+  if (filters.genres.length > 0) query = query.overlaps("albums.musicbrainz_genres", filters.genres);
 
   const idFilter = await resolveIdFilter(filters);
   if (idFilter) query = query.in("id", idFilter);
@@ -263,6 +257,7 @@ async function queryAlbums(filters: LibraryFilters): Promise<LibraryQueryResult<
   if (filters.popularityMax !== undefined) query = query.lte("popularity", filters.popularityMax);
   if (filters.savedFrom) query = query.gte("saved_at", filters.savedFrom);
   if (filters.savedTo) query = query.lte("saved_at", filters.savedTo);
+  if (filters.genres.length > 0) query = query.overlaps("musicbrainz_genres", filters.genres);
 
   const idFilter = await resolveIdFilter(filters);
   if (idFilter) query = query.in("id", idFilter);
