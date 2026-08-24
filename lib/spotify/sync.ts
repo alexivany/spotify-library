@@ -518,18 +518,51 @@ async function upsertTrackArtists(savedTracks: SpotifySavedTrack[], knownArtistI
 }
 
 /** Clears `saved_at` for rows no longer present in the current library snapshot. Returns the count cleared. */
+/**
+ * Marks rows saved_at: null for anything previously saved but no longer
+ * present in the current sync. Diffs id sets in JS and updates only the
+ * ids that changed, in small `.in(...)` batches, rather than putting the
+ * full (up to ~10k-id) current-library list into a `.not("id", "in", ...)`
+ * filter — that put every id straight into the request URL and, once the
+ * library grew large enough, overflowed Cloudflare's URI length limit
+ * ("414 Request-URI Too Large").
+ */
 async function reconcileUnsaved(
   supabase: ReturnType<typeof getSupabaseServerClient>,
   table: "tracks" | "albums",
   currentIds: string[],
 ): Promise<number> {
-  let query = supabase.from(table).update({ saved_at: null }).not("saved_at", "is", null);
-  if (currentIds.length > 0) {
-    query = query.not("id", "in", `(${currentIds.map((id) => `"${id}"`).join(",")})`);
+  const currentIdSet = new Set(currentIds);
+  const previouslySavedIds = await fetchSavedIds(supabase, table);
+  const idsToUnsave = previouslySavedIds.filter((id) => !currentIdSet.has(id));
+
+  for (const batch of chunk(idsToUnsave, 200)) {
+    const { error } = await supabase.from(table).update({ saved_at: null }).in("id", batch);
+    if (error) throw new Error(`Failed to reconcile ${table}: ${error.message}`);
   }
-  const { data, error } = await query.select("id");
-  if (error) throw new Error(`Failed to reconcile ${table}: ${error.message}`);
-  return data?.length ?? 0;
+  return idsToUnsave.length;
+}
+
+/** Pages through a table's currently-saved ids past PostgREST's default max_rows cap. */
+async function fetchSavedIds(
+  supabase: ReturnType<typeof getSupabaseServerClient>,
+  table: "tracks" | "albums",
+): Promise<string[]> {
+  const ids: string[] = [];
+  const pageSize = 1000;
+  let offset = 0;
+  for (;;) {
+    const { data, error } = await supabase
+      .from(table)
+      .select("id")
+      .not("saved_at", "is", null)
+      .range(offset, offset + pageSize - 1);
+    if (error) throw new Error(`Failed to load saved ${table} ids: ${error.message}`);
+    for (const row of data ?? []) ids.push(row.id);
+    if (!data || data.length < pageSize) break;
+    offset += pageSize;
+  }
+  return ids;
 }
 
 /** Spotify release dates are truncated to year or month depending on precision; pad to a full date. */
