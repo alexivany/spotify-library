@@ -55,6 +55,7 @@ export function parseLibraryFilters(searchParams: RawSearchParams): LibraryFilte
     releaseFrom: first(searchParams.releaseFrom),
     releaseTo: first(searchParams.releaseTo),
     label: first(searchParams.label),
+    artistId: first(searchParams.artistId),
     q: first(searchParams.q),
     explicit: explicitRaw === "true" ? true : explicitRaw === "false" ? false : undefined,
     popularityMin: parseNumber(searchParams.popularityMin),
@@ -97,6 +98,18 @@ async function resolveTagIds(view: LibraryView, tagId: string): Promise<string[]
     .eq("item_type", itemType);
   if (error) throw new Error(`Failed to resolve tag filter: ${error.message}`);
   return (data ?? []).map((row) => row.item_id);
+}
+
+async function resolveArtistIds(view: LibraryView, artistId: string): Promise<string[]> {
+  const supabase = getSupabaseServerClient();
+  if (view === "tracks") {
+    const { data, error } = await supabase.from("track_artists").select("track_id").eq("artist_id", artistId);
+    if (error) throw new Error(`Failed to resolve artist filter: ${error.message}`);
+    return (data ?? []).map((row) => row.track_id);
+  }
+  const { data, error } = await supabase.from("album_artists").select("album_id").eq("artist_id", artistId);
+  if (error) throw new Error(`Failed to resolve artist filter: ${error.message}`);
+  return (data ?? []).map((row) => row.album_id);
 }
 
 async function resolveSearchIds(view: LibraryView, q: string): Promise<string[]> {
@@ -160,6 +173,9 @@ async function resolveIdFilter(filters: LibraryFilters): Promise<string[] | unde
   if (filters.tagId) {
     ids = await intersectIdFilter(ids, () => resolveTagIds(filters.view, filters.tagId!));
   }
+  if (filters.artistId) {
+    ids = await intersectIdFilter(ids, () => resolveArtistIds(filters.view, filters.artistId!));
+  }
   if (filters.q) {
     ids = await intersectIdFilter(ids, () => resolveSearchIds(filters.view, filters.q!));
   }
@@ -173,7 +189,7 @@ async function queryTracks(filters: LibraryFilters): Promise<LibraryQueryResult<
     .from("tracks")
     .select(
       `id,name,duration_ms,explicit,popularity,saved_at,preview_url,
-       albums!inner(id,name,album_type,release_date,resolved_label,image_url),
+       albums!inner(id,name,album_type,release_date,resolved_label,image_url,musicbrainz_genres),
        track_artists(position,artists(id,name))`,
       { count: "exact" },
     )
@@ -225,6 +241,7 @@ async function queryTracks(filters: LibraryFilters): Promise<LibraryQueryResult<
           release_date: row.albums.release_date,
           label: row.albums.resolved_label,
           image_url: row.albums.image_url,
+          genres: row.albums.musicbrainz_genres ?? [],
         }
       : null,
     artists: (row.track_artists ?? [])
@@ -243,7 +260,7 @@ async function queryAlbums(filters: LibraryFilters): Promise<LibraryQueryResult<
   let query = supabase
     .from("albums")
     .select(
-      `id,name,album_type,release_date,release_date_precision,resolved_label,total_tracks,popularity,image_url,saved_at,
+      `id,name,album_type,release_date,release_date_precision,resolved_label,total_tracks,popularity,image_url,saved_at,musicbrainz_genres,
        album_artists(position,artists(id,name))`,
       { count: "exact" },
     )
@@ -284,6 +301,7 @@ async function queryAlbums(filters: LibraryFilters): Promise<LibraryQueryResult<
     popularity: row.popularity,
     image_url: row.image_url,
     saved_at: row.saved_at,
+    genres: row.musicbrainz_genres ?? [],
     artists: (row.album_artists ?? [])
       .slice()
       .sort((a, b) => a.position - b.position)

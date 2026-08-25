@@ -1,12 +1,13 @@
 import { getAvailableGenres, getAvailableLabels, parseLibraryFilters, queryLibrary } from "@/lib/library/query";
 import { getSupabaseServerClient } from "@/lib/supabase/server";
-import type { LibraryDisplay } from "@/lib/library/types";
+import { GRID_CARD_SIZES, type GridCardSize, type LibraryDisplay } from "@/lib/library/types";
 import { LibraryFilterSidebar } from "./filter-sidebar";
 import { ResultsTable } from "./results-table";
 import { GridView } from "./grid-view";
 import { LibraryPagination } from "./pagination";
 import { ViewToggle } from "./view-toggle";
 import { DisplayToggle } from "./display-toggle";
+import { CardSizeToggle } from "./card-size-toggle";
 import { ExportLinks } from "./export-links";
 
 export const dynamic = "force-dynamic";
@@ -35,6 +36,10 @@ export default async function LibraryPage({
   const filters = parseLibraryFilters(sp);
   const displayParam = Array.isArray(sp.display) ? sp.display[0] : sp.display;
   const display: LibraryDisplay = displayParam === "grid" ? "grid" : "list";
+  const cardSizeParam = Array.isArray(sp.cardSize) ? sp.cardSize[0] : sp.cardSize;
+  const cardSize: GridCardSize = GRID_CARD_SIZES.includes(cardSizeParam as GridCardSize)
+    ? (cardSizeParam as GridCardSize)
+    : "medium";
   const supabase = getSupabaseServerClient();
 
   const [{ items, total, page, pageSize }, genres, labels, foldersRes, tagsRes] = await Promise.all([
@@ -78,6 +83,7 @@ export default async function LibraryPage({
           <div className="flex items-center gap-3">
             <ViewToggle view={filters.view} display={display} />
             <DisplayToggle display={display} searchParams={toURLSearchParams(sp)} />
+            {display === "grid" && <CardSizeToggle cardSize={cardSize} searchParams={toURLSearchParams(sp)} />}
           </div>
           <ExportLinks view={filters.view} searchParams={toURLSearchParams(sp)} />
         </div>
@@ -89,6 +95,7 @@ export default async function LibraryPage({
             tags={tags}
             itemFolderIds={itemFolderIds}
             itemTagIds={itemTagIds}
+            cardSize={cardSize}
           />
         ) : (
           <ResultsTable

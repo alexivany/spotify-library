@@ -71,10 +71,11 @@ function MenuBody({
   albumSpotifyUrl,
   details,
   detailsTitle,
-}: LibraryItemMenuProps) {
+  detailsOpen,
+  setDetailsOpen,
+}: LibraryItemMenuProps & { detailsOpen: boolean; setDetailsOpen: (open: boolean) => void }) {
   const router = useRouter();
   const { folderIds, tagIds, toggleFolder, toggleTag } = useAssignmentState(itemType, itemId, initialFolderIds, initialTagIds);
-  const [detailsOpen, setDetailsOpen] = useState(false);
 
   return (
     <>
@@ -163,6 +164,12 @@ function MenuBody({
                 <dd className="text-right font-medium text-white">{row.value}</dd>
               </div>
             ))}
+            <div className="flex items-baseline justify-between gap-4">
+              <dt className="text-muted-foreground">Tags</dt>
+              <dd className="text-right font-medium text-white">
+                {tags.filter((tag) => tagIds.has(tag.id)).map((tag) => tag.name).join(", ") || "—"}
+              </dd>
+            </div>
           </dl>
         </DialogContent>
       </Dialog>
@@ -176,6 +183,10 @@ function startDrag(e: React.DragEvent, itemType: "track" | "album", itemId: stri
   e.dataTransfer.effectAllowed = "copy";
 }
 
+function isInteractiveTarget(target: EventTarget | null): boolean {
+  return target instanceof Element && target.closest("a, button, input, [role='menuitem']") !== null;
+}
+
 export function LibraryCardMenu({
   itemType,
   itemId,
@@ -184,6 +195,7 @@ export function LibraryCardMenu({
   ...menuProps
 }: LibraryItemMenuProps & { className?: string; children: ReactNode }) {
   const [dragging, setDragging] = useState(false);
+  const [detailsOpen, setDetailsOpen] = useState(false);
 
   return (
     <ContextMenu>
@@ -194,11 +206,15 @@ export function LibraryCardMenu({
           setDragging(true);
         }}
         onDragEnd={() => setDragging(false)}
-        className={cn(className, dragging && "opacity-40")}
+        onClick={(e) => {
+          if (isInteractiveTarget(e.target)) return;
+          setDetailsOpen(true);
+        }}
+        className={cn(className, "cursor-pointer", dragging && "opacity-40")}
       >
         {children}
       </ContextMenuTrigger>
-      <MenuBody itemType={itemType} itemId={itemId} {...menuProps} />
+      <MenuBody itemType={itemType} itemId={itemId} detailsOpen={detailsOpen} setDetailsOpen={setDetailsOpen} {...menuProps} />
     </ContextMenu>
   );
 }
@@ -210,6 +226,7 @@ export function LibraryRowMenu({
   ...menuProps
 }: LibraryItemMenuProps & { children: ReactNode }) {
   const [dragging, setDragging] = useState(false);
+  const [detailsOpen, setDetailsOpen] = useState(false);
 
   return (
     <ContextMenu>
@@ -222,13 +239,17 @@ export function LibraryRowMenu({
               setDragging(true);
             }}
             onDragEnd={() => setDragging(false)}
-            className={cn(dragging && "opacity-40")}
+            onClick={(e) => {
+              if (isInteractiveTarget(e.target)) return;
+              setDetailsOpen(true);
+            }}
+            className={cn("cursor-pointer", dragging && "opacity-40")}
           />
         }
       >
         {children}
       </ContextMenuTrigger>
-      <MenuBody itemType={itemType} itemId={itemId} {...menuProps} />
+      <MenuBody itemType={itemType} itemId={itemId} detailsOpen={detailsOpen} setDetailsOpen={setDetailsOpen} {...menuProps} />
     </ContextMenu>
   );
 }

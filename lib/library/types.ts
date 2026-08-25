@@ -1,6 +1,9 @@
 export type LibraryView = "tracks" | "albums";
 export type LibraryDisplay = "list" | "grid";
+export type GridCardSize = "small" | "medium" | "large";
 export type AlbumType = "album" | "single" | "compilation";
+
+export const GRID_CARD_SIZES: GridCardSize[] = ["small", "medium", "large"];
 
 export type SortKey = "saved_at" | "name" | "popularity" | "release_date";
 export type SortDirection = "asc" | "desc";
@@ -19,7 +22,10 @@ export const SORT_OPTIONS: { value: SortOption; label: string }[] = [
 
 export const ALBUM_TYPES: AlbumType[] = ["album", "single", "compilation"];
 
-export const DEFAULT_PAGE_SIZE = 25;
+// A common multiple of the grid view's column counts (2/3/4/6/8, see
+// grid-view.tsx) so a full page always fills complete rows — no lone album
+// stranded on the last row — at every breakpoint.
+export const DEFAULT_PAGE_SIZE = 24;
 
 export interface LibraryFilters {
   view: LibraryView;
@@ -28,6 +34,7 @@ export interface LibraryFilters {
   releaseFrom?: string;
   releaseTo?: string;
   label?: string;
+  artistId?: string;
   q?: string;
   explicit?: boolean;
   popularityMin?: number;
@@ -63,6 +70,7 @@ export interface LibraryTrackItem {
     release_date: string | null;
     label: string | null;
     image_url: string | null;
+    genres: string[];
   } | null;
   artists: LibraryArtistRef[];
 }
@@ -78,6 +86,7 @@ export interface LibraryAlbumItem {
   popularity: number | null;
   image_url: string | null;
   saved_at: string | null;
+  genres: string[];
   artists: LibraryArtistRef[];
 }
 

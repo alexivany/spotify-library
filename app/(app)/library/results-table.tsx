@@ -1,4 +1,5 @@
 import Image from "next/image";
+import Link from "next/link";
 import {
   Table,
   TableBody,
@@ -11,7 +12,7 @@ import { formatDate, formatDuration } from "@/lib/library/format";
 import type { LibraryAlbumItem, LibraryTrackItem, LibraryView } from "@/lib/library/types";
 import { ItemActions } from "./item-actions";
 import { LibraryRowMenu } from "./item-context-menu";
-import { buildAlbumMenuData, buildTrackMenuData } from "@/lib/library/menu-data";
+import { buildAlbumMenuData, buildTrackMenuData, filterHref } from "@/lib/library/menu-data";
 
 interface NamedItem {
   id: string;
@@ -20,7 +21,40 @@ interface NamedItem {
 
 export function ArtistNames({ artists }: { artists: { id: string; name: string }[] }) {
   if (artists.length === 0) return <span className="text-muted-foreground">Unknown artist</span>;
-  return <>{artists.map((a) => a.name).join(", ")}</>;
+  return (
+    <>
+      {artists.map((artist, i) => (
+        <span key={artist.id}>
+          {i > 0 && ", "}
+          <Link href={filterHref({ artistId: artist.id })} draggable={false} className="hover:text-white hover:underline">
+            {artist.name}
+          </Link>
+        </span>
+      ))}
+    </>
+  );
+}
+
+export function YearLink({ year }: { year: string | null }) {
+  if (!year) return null;
+  return (
+    <Link
+      href={filterHref({ releaseFrom: `${year}-01-01`, releaseTo: `${year}-12-31` })}
+      draggable={false}
+      className="hover:text-white hover:underline"
+    >
+      {year}
+    </Link>
+  );
+}
+
+export function LabelLink({ label }: { label: string | null | undefined }) {
+  if (!label) return <>—</>;
+  return (
+    <Link href={filterHref({ label })} draggable={false} className="hover:text-white hover:underline">
+      {label}
+    </Link>
+  );
 }
 
 function CoverImage({ url, alt }: { url: string | null; alt: string }) {
@@ -114,7 +148,9 @@ export function ResultsTable({
                   <ArtistNames artists={track.artists} />
                 </TableCell>
                 <TableCell className="text-muted-foreground">{formatDate(track.album?.release_date ?? null)}</TableCell>
-                <TableCell className="text-muted-foreground">{track.album?.label ?? "—"}</TableCell>
+                <TableCell className="text-muted-foreground">
+                  <LabelLink label={track.album?.label} />
+                </TableCell>
                 <TableCell className="text-right text-muted-foreground">{formatDuration(track.duration_ms)}</TableCell>
                 <TableCell className="text-muted-foreground">{formatDate(track.saved_at)}</TableCell>
                 <TableCell>
@@ -174,7 +210,9 @@ export function ResultsTable({
               </TableCell>
               <TableCell className="text-muted-foreground capitalize">{album.album_type}</TableCell>
               <TableCell className="text-muted-foreground">{formatDate(album.release_date)}</TableCell>
-              <TableCell className="text-muted-foreground">{album.label ?? "—"}</TableCell>
+              <TableCell className="text-muted-foreground">
+                <LabelLink label={album.label} />
+              </TableCell>
               <TableCell className="text-right text-muted-foreground">{album.total_tracks ?? "—"}</TableCell>
               <TableCell className="text-muted-foreground">{formatDate(album.saved_at)}</TableCell>
               <TableCell>
