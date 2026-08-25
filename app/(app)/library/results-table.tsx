@@ -113,12 +113,12 @@ export function ResultsTable({
             <TableRow>
               <TableHead className="w-12" />
               <TableHead>Track</TableHead>
-              <TableHead>Album</TableHead>
+              <TableHead className="hidden md:table-cell">Album</TableHead>
               <TableHead>Artist</TableHead>
-              <TableHead>Release date</TableHead>
-              <TableHead>Label</TableHead>
-              <TableHead className="text-right">Duration</TableHead>
-              <TableHead>Saved</TableHead>
+              <TableHead className="hidden lg:table-cell">Release date</TableHead>
+              <TableHead className="hidden lg:table-cell">Label</TableHead>
+              <TableHead className="hidden text-right sm:table-cell">Duration</TableHead>
+              <TableHead className="hidden md:table-cell">Saved</TableHead>
               <TableHead className="text-right">Actions</TableHead>
             </TableRow>
           </TableHeader>
@@ -143,16 +143,20 @@ export function ResultsTable({
                     {track.explicit && <ExplicitTag />}
                   </div>
                 </TableCell>
-                <TableCell className="text-muted-foreground">{track.album?.name ?? "—"}</TableCell>
+                <TableCell className="hidden text-muted-foreground md:table-cell">{track.album?.name ?? "—"}</TableCell>
                 <TableCell className="text-muted-foreground">
                   <ArtistNames artists={track.artists} />
                 </TableCell>
-                <TableCell className="text-muted-foreground">{formatDate(track.album?.release_date ?? null)}</TableCell>
-                <TableCell className="text-muted-foreground">
+                <TableCell className="hidden text-muted-foreground lg:table-cell">
+                  {formatDate(track.album?.release_date ?? null)}
+                </TableCell>
+                <TableCell className="hidden text-muted-foreground lg:table-cell">
                   <LabelLink label={track.album?.label} />
                 </TableCell>
-                <TableCell className="text-right text-muted-foreground">{formatDuration(track.duration_ms)}</TableCell>
-                <TableCell className="text-muted-foreground">{formatDate(track.saved_at)}</TableCell>
+                <TableCell className="hidden text-right text-muted-foreground sm:table-cell">
+                  {formatDuration(track.duration_ms)}
+                </TableCell>
+                <TableCell className="hidden text-muted-foreground md:table-cell">{formatDate(track.saved_at)}</TableCell>
                 <TableCell>
                   <ItemActions
                     itemType="track"
@@ -181,11 +185,11 @@ export function ResultsTable({
             <TableHead className="w-12" />
             <TableHead>Album</TableHead>
             <TableHead>Artist</TableHead>
-            <TableHead>Type</TableHead>
-            <TableHead>Release date</TableHead>
-            <TableHead>Label</TableHead>
-            <TableHead className="text-right">Tracks</TableHead>
-            <TableHead>Saved</TableHead>
+            <TableHead className="hidden md:table-cell">Type</TableHead>
+            <TableHead className="hidden lg:table-cell">Release date</TableHead>
+            <TableHead className="hidden lg:table-cell">Label</TableHead>
+            <TableHead className="hidden text-right sm:table-cell">Tracks</TableHead>
+            <TableHead className="hidden md:table-cell">Saved</TableHead>
             <TableHead className="text-right">Actions</TableHead>
           </TableRow>
         </TableHeader>
@@ -208,13 +212,15 @@ export function ResultsTable({
               <TableCell className="text-muted-foreground">
                 <ArtistNames artists={album.artists} />
               </TableCell>
-              <TableCell className="text-muted-foreground capitalize">{album.album_type}</TableCell>
-              <TableCell className="text-muted-foreground">{formatDate(album.release_date)}</TableCell>
-              <TableCell className="text-muted-foreground">
+              <TableCell className="hidden text-muted-foreground capitalize md:table-cell">{album.album_type}</TableCell>
+              <TableCell className="hidden text-muted-foreground lg:table-cell">{formatDate(album.release_date)}</TableCell>
+              <TableCell className="hidden text-muted-foreground lg:table-cell">
                 <LabelLink label={album.label} />
               </TableCell>
-              <TableCell className="text-right text-muted-foreground">{album.total_tracks ?? "—"}</TableCell>
-              <TableCell className="text-muted-foreground">{formatDate(album.saved_at)}</TableCell>
+              <TableCell className="hidden text-right text-muted-foreground sm:table-cell">
+                {album.total_tracks ?? "—"}
+              </TableCell>
+              <TableCell className="hidden text-muted-foreground md:table-cell">{formatDate(album.saved_at)}</TableCell>
               <TableCell>
                 <ItemActions
                   itemType="album"

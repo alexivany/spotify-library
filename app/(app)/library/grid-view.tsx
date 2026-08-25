@@ -68,7 +68,7 @@ export function GridView({
   }
 
   return (
-    <div className={`grid gap-5 ${GRID_COLS_CLASSES[cardSize]}`}>
+    <div className={`grid gap-3 sm:gap-5 ${GRID_COLS_CLASSES[cardSize]}`}>
       {items.map((item) => {
         const track = view === "tracks" ? (item as LibraryTrackItem) : null;
         const album = view === "albums" ? (item as LibraryAlbumItem) : null;

@@ -2,6 +2,7 @@
 
 import { useState, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
+import Image from "next/image";
 import { Disc3, ExternalLink, Filter, FolderPlus, Info, TagPlus } from "lucide-react";
 import {
   ContextMenu,
@@ -71,6 +72,7 @@ function MenuBody({
   albumSpotifyUrl,
   details,
   detailsTitle,
+  imageUrl,
   detailsOpen,
   setDetailsOpen,
 }: LibraryItemMenuProps & { detailsOpen: boolean; setDetailsOpen: (open: boolean) => void }) {
@@ -157,6 +159,11 @@ function MenuBody({
           <DialogHeader>
             <DialogTitle className="pr-8">{detailsTitle}</DialogTitle>
           </DialogHeader>
+          {imageUrl && (
+            <div className="relative mx-auto aspect-square w-40 overflow-hidden rounded-md bg-muted shadow-lg">
+              <Image src={imageUrl} alt={detailsTitle} fill sizes="160px" className="object-cover" unoptimized />
+            </div>
+          )}
           <dl className="space-y-2 text-sm">
             {details.map((row) => (
               <div key={row.label} className="flex items-baseline justify-between gap-4">

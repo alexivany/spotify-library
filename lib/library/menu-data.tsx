@@ -19,6 +19,7 @@ export interface MenuData {
   albumSpotifyUrl?: string;
   details: DetailRow[];
   detailsTitle: string;
+  imageUrl: string | null;
 }
 
 function capitalize(value: string): string {
@@ -82,6 +83,7 @@ export function buildAlbumMenuData(album: LibraryAlbumItem): MenuData {
     filters: buildFacets(album.artists, album.label, album.release_date, album.album_type),
     spotifyUrl: `https://open.spotify.com/album/${album.id}`,
     detailsTitle: album.name,
+    imageUrl: album.image_url,
     details: [
       { label: "Artists", value: artistLinks(album.artists) },
       { label: "Type", value: capitalize(album.album_type) },
@@ -100,6 +102,7 @@ export function buildTrackMenuData(track: LibraryTrackItem): MenuData {
     spotifyUrl: `https://open.spotify.com/track/${track.id}`,
     albumSpotifyUrl: track.album ? `https://open.spotify.com/album/${track.album.id}` : undefined,
     detailsTitle: track.name,
+    imageUrl: track.album?.image_url ?? null,
     details: [
       { label: "Artists", value: artistLinks(track.artists) },
       { label: "Album", value: track.album?.name ?? "—" },

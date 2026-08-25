@@ -21,9 +21,9 @@ export default async function AppLayout({
   return (
     <div className="flex h-full min-h-screen bg-sidebar">
       <Sidebar folders={folders ?? []} tags={tags ?? []} />
-      <div className="flex min-w-0 flex-1 flex-col overflow-hidden p-2 pl-0">
-        <div className="flex min-h-0 flex-1 flex-col overflow-y-auto rounded-lg bg-background">
-          <SiteHeader />
+      <div className="flex min-w-0 flex-1 flex-col overflow-hidden md:p-2 md:pl-0">
+        <div className="flex min-h-0 flex-1 flex-col overflow-y-auto bg-background md:rounded-lg">
+          <SiteHeader folders={folders ?? []} tags={tags ?? []} />
           {children}
         </div>
       </div>

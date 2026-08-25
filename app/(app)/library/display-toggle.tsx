@@ -1,8 +1,11 @@
+"use client";
+
 import Link from "next/link";
 import { LayoutGrid, List } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { buildSearchParams } from "@/lib/library/url";
 import type { LibraryDisplay } from "@/lib/library/types";
+import { DISPLAY_STORAGE_KEY } from "./library-display-sync";
 
 const OPTIONS: { value: LibraryDisplay; label: string; icon: typeof List }[] = [
   { value: "list", label: "List view", icon: List },
@@ -27,6 +30,13 @@ export function DisplayToggle({
             href={href}
             aria-label={label}
             aria-current={active}
+            onClick={() => {
+              try {
+                localStorage.setItem(DISPLAY_STORAGE_KEY, value);
+              } catch {
+                // ignore
+              }
+            }}
             className={cn(
               "flex size-7 items-center justify-center rounded-full transition-colors",
               active ? "bg-white text-black" : "text-muted-foreground hover:text-white",

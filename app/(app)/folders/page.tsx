@@ -16,7 +16,7 @@ export default async function FoldersPage() {
   for (const row of items ?? []) counts.set(row.folder_id, (counts.get(row.folder_id) ?? 0) + 1);
 
   return (
-    <div className="mx-auto w-full max-w-2xl flex-1 space-y-6 px-6 py-6">
+    <div className="mx-auto w-full max-w-2xl flex-1 space-y-6 px-4 py-6 sm:px-6">
       <h1 className="font-heading text-2xl font-extrabold tracking-tight text-white">Folders</h1>
       <CreateFolderForm />
       <ul className="overflow-hidden rounded-lg bg-card/60">

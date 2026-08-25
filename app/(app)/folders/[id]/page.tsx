@@ -30,7 +30,7 @@ export default async function FolderDetailPage({ params }: { params: Promise<{ i
   ]);
 
   return (
-    <div className="mx-auto w-full max-w-2xl flex-1 space-y-8 px-6 py-6">
+    <div className="mx-auto w-full max-w-2xl flex-1 space-y-8 px-4 py-6 sm:px-6">
       <RenameFolderForm folderId={folder.id} initialName={folder.name} />
 
       <div className="space-y-2">

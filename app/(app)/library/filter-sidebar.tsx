@@ -18,12 +18,12 @@ import { Button } from "@/components/ui/button";
 import { ALBUM_TYPES, SORT_OPTIONS, type LibraryFilters } from "@/lib/library/types";
 import { buildSearchParams, type SearchParamsPatch } from "@/lib/library/url";
 
-interface Folder {
+export interface Folder {
   id: string;
   name: string;
 }
 
-interface Tag {
+export interface Tag {
   id: string;
   name: string;
 }
@@ -36,31 +36,21 @@ const EXPLICIT_LABELS: Record<string, string> = {
   false: "Clean only",
 };
 
-export function LibraryFilterSidebar({
-  filters,
-  genres,
-  labels,
-  folders,
-  tags,
-}: {
-  filters: LibraryFilters;
-  genres: string[];
-  labels: string[];
-  folders: Folder[];
-  tags: Tag[];
-}) {
+function toggleListValue(list: string[], value: string): string[] {
+  return list.includes(value) ? list.filter((v) => v !== value) : [...list, value];
+}
+
+function minutesToMs(minutes: string): number | undefined {
+  if (!minutes) return undefined;
+  const n = Number(minutes);
+  return Number.isFinite(n) ? Math.round(n * 60_000) : undefined;
+}
+
+export function useFilterActions() {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const [collapsed, setCollapsed] = useState(false);
-
-  const folderNames = useMemo(() => new Map(folders.map((f) => [f.id, f.name])), [folders]);
-  const tagNames = useMemo(() => new Map(tags.map((t) => [t.id, t.name])), [tags]);
-  const sortLabels = useMemo(
-    () => new Map<string, string>(SORT_OPTIONS.map((o) => [o.value, o.label])),
-    [],
-  );
 
   const apply = useCallback(
     (patch: SearchParamsPatch) => {
@@ -78,58 +68,35 @@ export function LibraryFilterSidebar({
     [apply],
   );
 
-  function toggleListValue(list: string[], value: string): string[] {
-    return list.includes(value) ? list.filter((v) => v !== value) : [...list, value];
-  }
+  return { apply, applyDebounced, router, pathname, searchParams };
+}
 
-  function minutesToMs(minutes: string): number | undefined {
-    if (!minutes) return undefined;
-    const n = Number(minutes);
-    return Number.isFinite(n) ? Math.round(n * 60_000) : undefined;
-  }
-
-  if (collapsed) {
-    return (
-      <div className="w-14">
-        <button
-          type="button"
-          onClick={() => setCollapsed(false)}
-          aria-label="Expand filters"
-          className="flex w-full flex-col items-center gap-2 rounded-lg bg-card/60 py-4 text-muted-foreground transition-colors hover:text-white"
-        >
-          <SlidersHorizontal className="size-5" />
-        </button>
-      </div>
-    );
-  }
+export function FilterFields({
+  filters,
+  genres,
+  labels,
+  folders,
+  tags,
+  apply,
+  applyDebounced,
+}: {
+  filters: LibraryFilters;
+  genres: string[];
+  labels: string[];
+  folders: Folder[];
+  tags: Tag[];
+  apply: (patch: SearchParamsPatch) => void;
+  applyDebounced: (patch: SearchParamsPatch) => void;
+}) {
+  const folderNames = useMemo(() => new Map(folders.map((f) => [f.id, f.name])), [folders]);
+  const tagNames = useMemo(() => new Map(tags.map((t) => [t.id, t.name])), [tags]);
+  const sortLabels = useMemo(
+    () => new Map<string, string>(SORT_OPTIONS.map((o) => [o.value, o.label])),
+    [],
+  );
 
   return (
-    <div className="w-64 space-y-6 rounded-lg bg-card/60 p-4">
-      <div className="flex items-center justify-between">
-        <h2 className="text-xs font-bold tracking-wide text-white uppercase">Filters</h2>
-        <div className="flex items-center gap-3">
-          <Button
-            variant="ghost"
-            size="sm"
-            className="h-auto rounded-full p-0 text-xs font-semibold text-muted-foreground hover:bg-transparent hover:text-white hover:underline"
-            onClick={() => {
-              const display = searchParams.get("display");
-              router.push(`${pathname}?view=${filters.view}${display === "grid" ? "&display=grid" : ""}`);
-            }}
-          >
-            Reset
-          </Button>
-          <button
-            type="button"
-            onClick={() => setCollapsed(true)}
-            aria-label="Collapse filters"
-            className="text-muted-foreground transition-colors hover:text-white"
-          >
-            <ChevronLeft className="size-4" />
-          </button>
-        </div>
-      </div>
-
+    <div className="space-y-6">
       <div className="space-y-2">
         <Label htmlFor="search">Search</Label>
         <Input
@@ -377,6 +344,77 @@ export function LibraryFilterSidebar({
           </SelectContent>
         </Select>
       </div>
+    </div>
+  );
+}
+
+export function LibraryFilterSidebar({
+  filters,
+  genres,
+  labels,
+  folders,
+  tags,
+}: {
+  filters: LibraryFilters;
+  genres: string[];
+  labels: string[];
+  folders: Folder[];
+  tags: Tag[];
+}) {
+  const { apply, applyDebounced, router, pathname, searchParams } = useFilterActions();
+  const [collapsed, setCollapsed] = useState(false);
+
+  if (collapsed) {
+    return (
+      <div className="w-14">
+        <button
+          type="button"
+          onClick={() => setCollapsed(false)}
+          aria-label="Expand filters"
+          className="flex w-full flex-col items-center gap-2 rounded-lg bg-card/60 py-4 text-muted-foreground transition-colors hover:text-white"
+        >
+          <SlidersHorizontal className="size-5" />
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="w-64 space-y-6 rounded-lg bg-card/60 p-4">
+      <div className="flex items-center justify-between">
+        <h2 className="text-xs font-bold tracking-wide text-white uppercase">Filters</h2>
+        <div className="flex items-center gap-3">
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-auto rounded-full p-0 text-xs font-semibold text-muted-foreground hover:bg-transparent hover:text-white hover:underline"
+            onClick={() => {
+              const display = searchParams.get("display");
+              router.push(`${pathname}?view=${filters.view}${display === "grid" ? "&display=grid" : ""}`);
+            }}
+          >
+            Reset
+          </Button>
+          <button
+            type="button"
+            onClick={() => setCollapsed(true)}
+            aria-label="Collapse filters"
+            className="text-muted-foreground transition-colors hover:text-white"
+          >
+            <ChevronLeft className="size-4" />
+          </button>
+        </div>
+      </div>
+
+      <FilterFields
+        filters={filters}
+        genres={genres}
+        labels={labels}
+        folders={folders}
+        tags={tags}
+        apply={apply}
+        applyDebounced={applyDebounced}
+      />
     </div>
   );
 }

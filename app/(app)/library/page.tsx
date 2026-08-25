@@ -1,7 +1,9 @@
+import { Suspense } from "react";
 import { getAvailableGenres, getAvailableLabels, parseLibraryFilters, queryLibrary } from "@/lib/library/query";
 import { getSupabaseServerClient } from "@/lib/supabase/server";
 import { GRID_CARD_SIZES, type GridCardSize, type LibraryDisplay } from "@/lib/library/types";
 import { LibraryFilterSidebar } from "./filter-sidebar";
+import { MobileFilterSheet } from "./mobile-filter-sheet";
 import { ResultsTable } from "./results-table";
 import { GridView } from "./grid-view";
 import { LibraryPagination } from "./pagination";
@@ -9,6 +11,7 @@ import { ViewToggle } from "./view-toggle";
 import { DisplayToggle } from "./display-toggle";
 import { CardSizeToggle } from "./card-size-toggle";
 import { ExportLinks } from "./export-links";
+import { LibraryDisplaySync } from "./library-display-sync";
 
 export const dynamic = "force-dynamic";
 
@@ -73,17 +76,21 @@ export default async function LibraryPage({
   const tags = tagsRes.data ?? [];
 
   return (
-    <div className="flex w-full flex-1 gap-6 px-6 pb-6">
-      <aside className="shrink-0">
+    <div className="flex w-full flex-1 flex-col gap-4 px-4 pb-6 md:flex-row md:gap-6 md:px-6">
+      <aside className="hidden shrink-0 md:block">
         <LibraryFilterSidebar filters={filters} genres={genres} labels={labels} folders={folders} tags={tags} />
       </aside>
       <main className="min-w-0 flex-1 space-y-5">
+        <Suspense fallback={null}>
+          <LibraryDisplaySync />
+        </Suspense>
         <h1 className="font-heading text-2xl font-extrabold tracking-tight text-white">Your Library</h1>
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex flex-wrap items-center gap-3">
             <ViewToggle view={filters.view} display={display} />
             <DisplayToggle display={display} searchParams={toURLSearchParams(sp)} />
             {display === "grid" && <CardSizeToggle cardSize={cardSize} searchParams={toURLSearchParams(sp)} />}
+            <MobileFilterSheet filters={filters} genres={genres} labels={labels} folders={folders} tags={tags} />
           </div>
           <ExportLinks view={filters.view} searchParams={toURLSearchParams(sp)} />
         </div>

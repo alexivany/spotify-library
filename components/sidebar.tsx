@@ -92,7 +92,7 @@ export function Sidebar({ folders, tags }: { folders: Folder[]; tags: Tag[] }) {
   return (
     <aside
       className={cn(
-        "flex shrink-0 flex-col gap-2 bg-sidebar p-2 transition-[width] duration-150",
+        "hidden shrink-0 flex-col gap-2 bg-sidebar p-2 transition-[width] duration-150 md:flex",
         collapsed ? "w-18" : "w-60",
       )}
     >
