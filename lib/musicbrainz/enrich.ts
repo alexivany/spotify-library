@@ -11,6 +11,29 @@ function asJson(value: unknown): Json {
 const RETRY_COOLDOWN_DAYS = 7;
 const PAGE_SIZE = 1000;
 
+// Vercel's function timeout kills the invocation outright, skipping the
+// catch block in runEnrichment() below — so a run that gets killed
+// mid-flight leaves its enrichment_runs row stuck at status "running"
+// forever, with no finished_at, instead of ever reaching "error". Sweep
+// those up before starting a new run so the UI's "last enriched" reflects
+// reality instead of a row that will never update on its own. 10 minutes is
+// comfortably above the 60s maxDuration (Vercel Hobby's ceiling) this route
+// runs under.
+const STALE_RUN_THRESHOLD_MS = 10 * 60 * 1000;
+
+async function reapStaleEnrichmentRuns(supabase: ReturnType<typeof getSupabaseServerClient>) {
+  const staleCutoff = new Date(Date.now() - STALE_RUN_THRESHOLD_MS).toISOString();
+  await supabase
+    .from("enrichment_runs")
+    .update({
+      status: "error",
+      finished_at: new Date().toISOString(),
+      error: "Orphaned: the previous run exceeded Vercel's function timeout and never reported a final status.",
+    })
+    .eq("status", "running")
+    .lt("started_at", staleCutoff);
+}
+
 // A handful of unexpected failures (network blips, a transient MusicBrainz
 // 5xx that outlasted the client's own retries) is normal over a long run.
 // More than this suggests something systemic — e.g. MusicBrainz blocking the
@@ -29,6 +52,7 @@ export interface EnrichmentCounts {
 
 export async function runEnrichment(): Promise<EnrichmentCounts> {
   const supabase = getSupabaseServerClient();
+  await reapStaleEnrichmentRuns(supabase);
 
   const { data: run, error: insertError } = await supabase
     .from("enrichment_runs")

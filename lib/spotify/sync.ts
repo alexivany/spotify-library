@@ -22,6 +22,28 @@ const PAGE_LIMIT = 50;
 const ARTIST_BATCH_SIZE = 50;
 const ALBUM_BATCH_SIZE = 20;
 
+// Vercel's function timeout kills the invocation outright, skipping the
+// catch block in runSync() below — so a run that gets killed mid-flight
+// leaves its sync_runs row stuck at status "running" forever, with no
+// finished_at, instead of ever reaching "error". Sweep those up before
+// starting a new run so the UI's "last sync" reflects reality instead of a
+// row that will never update on its own. 10 minutes is comfortably above
+// the 60s maxDuration (Vercel Hobby's ceiling) this route runs under.
+const STALE_RUN_THRESHOLD_MS = 10 * 60 * 1000;
+
+async function reapStaleSyncRuns(supabase: ReturnType<typeof getSupabaseServerClient>) {
+  const staleCutoff = new Date(Date.now() - STALE_RUN_THRESHOLD_MS).toISOString();
+  await supabase
+    .from("sync_runs")
+    .update({
+      status: "error",
+      finished_at: new Date().toISOString(),
+      error: "Orphaned: the previous run exceeded Vercel's function timeout and never reported a final status.",
+    })
+    .eq("status", "running")
+    .lt("started_at", staleCutoff);
+}
+
 export interface SyncCounts {
   savedTracks: number;
   savedAlbums: number;
@@ -33,6 +55,7 @@ export interface SyncCounts {
 
 export async function runSync(): Promise<SyncCounts> {
   const supabase = getSupabaseServerClient();
+  await reapStaleSyncRuns(supabase);
 
   const { data: run, error: insertError } = await supabase
     .from("sync_runs")
