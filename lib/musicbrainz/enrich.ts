@@ -1,6 +1,7 @@
 import { backupDatabaseToCsv } from "@/lib/backup/csv";
 import { getSupabaseServerClient } from "@/lib/supabase/server";
 import type { Json } from "@/lib/supabase/types";
+import { resetMusicBrainzCircuitBreaker, MusicBrainzUnavailableError } from "./client";
 import { matchAlbum, type MatchResult } from "./match";
 
 function asJson(value: unknown): Json {
@@ -83,6 +84,7 @@ async function performEnrichment(): Promise<EnrichmentCounts> {
   const supabase = getSupabaseServerClient();
   const counts: EnrichmentCounts = { candidates: 0, matched: 0, ambiguous: 0, unmatched: 0, errors: 0 };
   const cutoffIso = new Date(Date.now() - RETRY_COOLDOWN_DAYS * 24 * 60 * 60 * 1000).toISOString();
+  resetMusicBrainzCircuitBreaker();
 
   for (;;) {
     const { data, error } = await supabase
@@ -113,6 +115,10 @@ async function performEnrichment(): Promise<EnrichmentCounts> {
         await persistMatch(row.id, result);
         counts[result.status] += 1;
       } catch (err) {
+        if (err instanceof MusicBrainzUnavailableError) {
+          console.warn(`[enrich] ${err.message}`);
+          throw err;
+        }
         counts.errors += 1;
         console.warn(
           `[enrich] Failed to match album ${row.id} (${row.name}): ${err instanceof Error ? err.message : String(err)}`,

@@ -14,9 +14,9 @@ export function SyncButton() {
     setError(null);
     try {
       const res = await fetch("/api/spotify/sync", { method: "POST" });
-      const json = await res.json();
-      if (!res.ok || json.status === "error") {
-        throw new Error(json.error ?? "Sync failed");
+      const json = res.headers.get("content-type")?.includes("application/json") ? await res.json() : null;
+      if (!res.ok || json?.status === "error") {
+        throw new Error(json?.error ?? `Sync failed (${res.status})`);
       }
       router.refresh();
     } catch (e) {

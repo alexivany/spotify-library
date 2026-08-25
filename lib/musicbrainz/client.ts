@@ -13,6 +13,21 @@ export class MusicBrainzApiError extends Error {
   }
 }
 
+/**
+ * Thrown when MusicBrainz has been rate-limiting/erroring so persistently
+ * that grinding through per-request backoff would burn the whole run's time
+ * budget (a serverless invocation has a hard wall-clock timeout, unlike a
+ * long-running worker). See MAX_CONSECUTIVE_TRANSIENT_RESPONSES below.
+ */
+export class MusicBrainzUnavailableError extends Error {
+  constructor(streak: number) {
+    super(
+      `MusicBrainz returned ${streak} consecutive rate-limit/server errors — aborting this run instead of ` +
+        `continuing to grind through backoff. A re-run resumes from whatever wasn't yet checked.`,
+    );
+  }
+}
+
 type MusicBrainzFetchOptions = Omit<RequestInit, "headers"> & {
   searchParams?: Record<string, string | number | undefined>;
   headers?: Record<string, string>;
@@ -40,6 +55,21 @@ function userAgent(): string {
     throw new Error("MUSICBRAINZ_CONTACT_EMAIL is not configured — required for MusicBrainz's User-Agent header.");
   }
   return `spotify-library/1.0 ( ${contactEmail} )`;
+}
+
+// A serverless invocation has a hard wall-clock timeout (Vercel kills it and
+// returns a non-JSON error page), unlike a long-running worker that can just
+// keep backing off forever. If MusicBrainz is having a sustained outage or
+// rate-limiting everything, grinding through MAX_TRANSIENT_RETRIES on every
+// remaining candidate would burn the whole budget and take the run down with
+// it. Tracking a streak of transient (5xx) responses across requests — not
+// just retries within one request — lets a run bail out fast instead.
+const MAX_CONSECUTIVE_TRANSIENT_RESPONSES = 15;
+let consecutiveTransientResponses = 0;
+
+/** Called at the start of an enrichment run so a prior run's streak (on a warm lambda) doesn't carry over. */
+export function resetMusicBrainzCircuitBreaker(): void {
+  consecutiveTransientResponses = 0;
 }
 
 // Serialized pacing gate — same chaining pattern as lib/spotify/client.ts, so
@@ -87,7 +117,17 @@ export async function musicBrainzFetch<T>(
       },
     });
 
-    if ((res.status === 503 || (res.status >= 500 && res.status < 600)) && transientRetries < MAX_TRANSIENT_RETRIES) {
+    const isTransientStatus = res.status === 503 || (res.status >= 500 && res.status < 600);
+    if (isTransientStatus) {
+      consecutiveTransientResponses += 1;
+      if (consecutiveTransientResponses >= MAX_CONSECUTIVE_TRANSIENT_RESPONSES) {
+        throw new MusicBrainzUnavailableError(consecutiveTransientResponses);
+      }
+    } else {
+      consecutiveTransientResponses = 0;
+    }
+
+    if (isTransientStatus && transientRetries < MAX_TRANSIENT_RETRIES) {
       transientRetries += 1;
       const waitSeconds = 2 ** transientRetries;
       console.warn(

@@ -14,9 +14,9 @@ export function EnrichButton() {
     setError(null);
     try {
       const res = await fetch("/api/musicbrainz/enrich", { method: "POST" });
-      const json = await res.json();
-      if (!res.ok || json.status === "error") {
-        throw new Error(json.error ?? "Enrichment failed");
+      const json = res.headers.get("content-type")?.includes("application/json") ? await res.json() : null;
+      if (!res.ok || json?.status === "error") {
+        throw new Error(json?.error ?? `Enrichment failed (${res.status})`);
       }
       router.refresh();
     } catch (e) {
