@@ -187,6 +187,7 @@ export type Database = {
       enrichment_runs: {
         Row: {
           counts: Json
+          cursor: Json | null
           error: string | null
           finished_at: string | null
           id: string
@@ -195,6 +196,7 @@ export type Database = {
         }
         Insert: {
           counts?: Json
+          cursor?: Json | null
           error?: string | null
           finished_at?: string | null
           id?: string
@@ -203,6 +205,7 @@ export type Database = {
         }
         Update: {
           counts?: Json
+          cursor?: Json | null
           error?: string | null
           finished_at?: string | null
           id?: string

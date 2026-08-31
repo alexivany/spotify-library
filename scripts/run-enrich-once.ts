@@ -7,10 +7,17 @@
  */
 import { runEnrichment } from "../lib/musicbrainz/enrich";
 
+// A large backlog can take more than one chunk (see CHUNK_TIME_BUDGET_MS in
+// lib/musicbrainz/enrich.ts) — keep calling runEnrichment() until it reports
+// "success".
 const t0 = Date.now();
 try {
-  const counts = await runEnrichment();
-  console.log(`[run-enrich-once] SUCCESS in ${((Date.now() - t0) / 1000).toFixed(1)}s`, JSON.stringify(counts));
+  let outcome = await runEnrichment();
+  while (outcome.status === "partial") {
+    console.log(`[run-enrich-once] chunk done at ${((Date.now() - t0) / 1000).toFixed(1)}s, continuing…`);
+    outcome = await runEnrichment();
+  }
+  console.log(`[run-enrich-once] SUCCESS in ${((Date.now() - t0) / 1000).toFixed(1)}s`, JSON.stringify(outcome.counts));
   process.exit(0);
 } catch (error) {
   console.error(

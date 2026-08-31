@@ -29,6 +29,7 @@ async function reapStaleEnrichmentRuns(supabase: ReturnType<typeof getSupabaseSe
       status: "error",
       finished_at: new Date().toISOString(),
       error: "Orphaned: the previous run exceeded Vercel's function timeout and never reported a final status.",
+      cursor: null,
     })
     .eq("status", "running")
     .lt("started_at", staleCutoff);
@@ -42,6 +43,10 @@ async function reapStaleEnrichmentRuns(supabase: ReturnType<typeof getSupabaseSe
 // yet successfully checked.
 const MAX_ERRORS_PER_RUN = 20;
 
+// Leaves ~10s of the 60s maxDuration (Vercel Hobby's ceiling) as margin for
+// the final DB write, CSV backup, and response.
+const CHUNK_TIME_BUDGET_MS = 50 * 1000;
+
 export interface EnrichmentCounts {
   candidates: number;
   matched: number;
@@ -50,25 +55,59 @@ export interface EnrichmentCounts {
   errors: number;
 }
 
-export async function runEnrichment(): Promise<EnrichmentCounts> {
+export type EnrichmentOutcome = { status: "success"; counts: EnrichmentCounts } | { status: "partial" };
+
+export async function runEnrichment(): Promise<EnrichmentOutcome> {
   const supabase = getSupabaseServerClient();
   await reapStaleEnrichmentRuns(supabase);
 
-  const { data: run, error: insertError } = await supabase
+  // Unlike sync (which needs a pagination cursor to know what to fetch next),
+  // "what's left to do" here is always fully derived from album state — a
+  // matched/checked row simply drops out of the candidate query in
+  // performEnrichment() below. So resuming an in-progress run only needs its
+  // accumulated counts (for an accurate final total), not a real cursor.
+  const { data: inProgress } = await supabase
     .from("enrichment_runs")
-    .insert({ status: "running" })
-    .select()
-    .single();
-  if (insertError || !run) {
-    throw new Error(`Failed to create enrichment_runs row: ${insertError?.message}`);
+    .select("id, cursor")
+    .eq("status", "running")
+    .order("started_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  let runId: string;
+  let resumeCounts: EnrichmentCounts | null;
+  if (inProgress) {
+    runId = inProgress.id;
+    resumeCounts = inProgress.cursor as EnrichmentCounts | null;
+  } else {
+    const { data: run, error: insertError } = await supabase
+      .from("enrichment_runs")
+      .insert({ status: "running" })
+      .select()
+      .single();
+    if (insertError || !run) {
+      throw new Error(`Failed to create enrichment_runs row: ${insertError?.message}`);
+    }
+    runId = run.id;
+    resumeCounts = null;
   }
 
   try {
-    const counts = await performEnrichment();
+    const step = await performEnrichment(resumeCounts);
+    if (step.done === false) {
+      await supabase.from("enrichment_runs").update({ cursor: asJson(step.counts) }).eq("id", runId);
+      return { status: "partial" };
+    }
+
     await supabase
       .from("enrichment_runs")
-      .update({ status: "success", finished_at: new Date().toISOString(), counts: asJson(counts) })
-      .eq("id", run.id);
+      .update({
+        status: "success",
+        finished_at: new Date().toISOString(),
+        counts: asJson(step.counts),
+        cursor: null,
+      })
+      .eq("id", runId);
     try {
       const backup = await backupDatabaseToCsv();
       console.log(`[enrich] CSV backup written to ${backup.dir}`);
@@ -77,7 +116,7 @@ export async function runEnrichment(): Promise<EnrichmentCounts> {
         `[enrich] CSV backup failed: ${backupError instanceof Error ? backupError.message : String(backupError)}`,
       );
     }
-    return counts;
+    return { status: "success", counts: step.counts };
   } catch (error) {
     await supabase
       .from("enrichment_runs")
@@ -85,8 +124,9 @@ export async function runEnrichment(): Promise<EnrichmentCounts> {
         status: "error",
         finished_at: new Date().toISOString(),
         error: error instanceof Error ? error.message : String(error),
+        cursor: null,
       })
-      .eq("id", run.id);
+      .eq("id", runId);
     throw error;
   }
 }
@@ -103,10 +143,21 @@ export async function runEnrichment(): Promise<EnrichmentCounts> {
  * as the underlying set shrinks" problem. An album that keeps erroring stays
  * in the set (checked_at untouched) and gets retried each pass, which is what
  * feeds the circuit breaker below.
+ *
+ * MusicBrainz's ~1.1s/request pacing means a large backlog can take far
+ * longer than a single serverless invocation is allowed to run. Rather than
+ * let Vercel kill the invocation mid-request, this checks a time budget
+ * between albums and returns early with the counts accumulated so far —
+ * runEnrichment() persists them and the next invocation (another cron tick,
+ * or the button firing again) picks up automatically, since the DB query
+ * above already excludes whatever this chunk just finished checking.
  */
-async function performEnrichment(): Promise<EnrichmentCounts> {
+async function performEnrichment(
+  resumeFrom: EnrichmentCounts | null,
+): Promise<{ done: true; counts: EnrichmentCounts } | { done: false; counts: EnrichmentCounts }> {
   const supabase = getSupabaseServerClient();
-  const counts: EnrichmentCounts = { candidates: 0, matched: 0, ambiguous: 0, unmatched: 0, errors: 0 };
+  const deadline = Date.now() + CHUNK_TIME_BUDGET_MS;
+  const counts: EnrichmentCounts = resumeFrom ?? { candidates: 0, matched: 0, ambiguous: 0, unmatched: 0, errors: 0 };
   const cutoffIso = new Date(Date.now() - RETRY_COOLDOWN_DAYS * 24 * 60 * 60 * 1000).toISOString();
   resetMusicBrainzCircuitBreaker();
 
@@ -118,7 +169,7 @@ async function performEnrichment(): Promise<EnrichmentCounts> {
       .or(`musicbrainz_checked_at.is.null,and(musicbrainz_match_status.neq.matched,musicbrainz_checked_at.lt.${cutoffIso})`)
       .range(0, PAGE_SIZE - 1);
     if (error) throw new Error(`Failed to load enrichment candidates: ${error.message}`);
-    if (!data || data.length === 0) break;
+    if (!data || data.length === 0) return { done: true, counts };
 
     console.log(`[enrich] processing ${data.length} candidate album(s)`);
 
@@ -154,12 +205,12 @@ async function performEnrichment(): Promise<EnrichmentCounts> {
           );
         }
       }
+
+      if (Date.now() >= deadline) return { done: false, counts };
     }
 
-    if (data.length < PAGE_SIZE) break;
+    if (data.length < PAGE_SIZE) return { done: true, counts };
   }
-
-  return counts;
 }
 
 async function persistMatch(albumId: string, result: MatchResult) {

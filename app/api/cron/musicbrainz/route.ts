@@ -13,8 +13,8 @@ async function handle(request: NextRequest) {
   }
 
   try {
-    const counts = await runEnrichment();
-    return NextResponse.json({ status: "success", counts });
+    const outcome = await runEnrichment();
+    return NextResponse.json(outcome);
   } catch (error) {
     return NextResponse.json(
       { status: "error", error: error instanceof Error ? error.message : String(error) },
