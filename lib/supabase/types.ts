@@ -7,6 +7,11 @@ export type Json =
   | Json[]
 
 export type Database = {
+  // Allows to automatically instantiate createClient with right options
+  // instead of createClient<Database, { PostgrestVersion: 'XX' }>(URL, KEY)
+  __InternalSupabase: {
+    PostgrestVersion: "14.5"
+  }
   graphql_public: {
     Tables: {
       [_ in never]: never
@@ -285,6 +290,7 @@ export type Database = {
       sync_runs: {
         Row: {
           counts: Json
+          cursor: Json | null
           error: string | null
           finished_at: string | null
           id: string
@@ -293,6 +299,7 @@ export type Database = {
         }
         Insert: {
           counts?: Json
+          cursor?: Json | null
           error?: string | null
           finished_at?: string | null
           id?: string
@@ -301,6 +308,7 @@ export type Database = {
         }
         Update: {
           counts?: Json
+          cursor?: Json | null
           error?: string | null
           finished_at?: string | null
           id?: string
@@ -588,4 +596,3 @@ export const Constants = {
     Enums: {},
   },
 } as const
-

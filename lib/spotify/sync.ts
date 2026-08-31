@@ -39,6 +39,7 @@ async function reapStaleSyncRuns(supabase: ReturnType<typeof getSupabaseServerCl
       status: "error",
       finished_at: new Date().toISOString(),
       error: "Orphaned: the previous run exceeded Vercel's function timeout and never reported a final status.",
+      cursor: null,
     })
     .eq("status", "running")
     .lt("started_at", staleCutoff);
@@ -53,25 +54,78 @@ export interface SyncCounts {
   albumsUnsaved: number;
 }
 
-export async function runSync(): Promise<SyncCounts> {
+export type SyncOutcome = { status: "success"; counts: SyncCounts } | { status: "partial" };
+
+/**
+ * Progress checkpoint persisted to sync_runs.cursor between chunks. A large
+ * library can take longer to sync than a single serverless invocation is
+ * allowed to run, so performSync() below does as much as fits in one time
+ * budget and returns this instead of finishing — the next call to runSync()
+ * (another cron tick, or the button firing again) picks up right where this
+ * one left off rather than restarting the whole library from scratch.
+ */
+interface SyncCursor {
+  phase: "albums" | "tracks" | "reconcile";
+  albumOffset: number;
+  trackOffset: number;
+  savedAlbumIds: string[];
+  savedTrackIds: string[];
+  initialArtistCount: number;
+  initialAlbumCount: number;
+  forbiddenSkipCount: number;
+}
+
+// Leaves ~10s of the 60s maxDuration (Vercel Hobby's ceiling) as margin for
+// the final DB writes, CSV backup, and response — a chunk that started a
+// Spotify fetch just before the budget expired still needs time to land it.
+const CHUNK_TIME_BUDGET_MS = 50 * 1000;
+
+export async function runSync(): Promise<SyncOutcome> {
   const supabase = getSupabaseServerClient();
   await reapStaleSyncRuns(supabase);
 
-  const { data: run, error: insertError } = await supabase
+  const { data: inProgress } = await supabase
     .from("sync_runs")
-    .insert({ status: "running" })
-    .select()
-    .single();
-  if (insertError || !run) {
-    throw new Error(`Failed to create sync_runs row: ${insertError?.message}`);
+    .select("id, cursor")
+    .eq("status", "running")
+    .order("started_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  let runId: string;
+  let cursor: SyncCursor | null;
+  if (inProgress) {
+    runId = inProgress.id;
+    cursor = inProgress.cursor as SyncCursor | null;
+  } else {
+    const { data: run, error: insertError } = await supabase
+      .from("sync_runs")
+      .insert({ status: "running" })
+      .select()
+      .single();
+    if (insertError || !run) {
+      throw new Error(`Failed to create sync_runs row: ${insertError?.message}`);
+    }
+    runId = run.id;
+    cursor = null;
   }
 
   try {
-    const counts = await performSync();
+    const step = await performSync(cursor);
+    if (step.done === false) {
+      await supabase.from("sync_runs").update({ cursor: asJson(step.cursor) }).eq("id", runId);
+      return { status: "partial" };
+    }
+
     await supabase
       .from("sync_runs")
-      .update({ status: "success", finished_at: new Date().toISOString(), counts: asJson(counts) })
-      .eq("id", run.id);
+      .update({
+        status: "success",
+        finished_at: new Date().toISOString(),
+        counts: asJson(step.counts),
+        cursor: null,
+      })
+      .eq("id", runId);
     // A backup failure shouldn't turn a successful sync into a reported
     // failure — log it and move on rather than throwing.
     try {
@@ -82,7 +136,7 @@ export async function runSync(): Promise<SyncCounts> {
         `[sync] CSV backup failed: ${backupError instanceof Error ? backupError.message : String(backupError)}`,
       );
     }
-    return counts;
+    return { status: "success", counts: step.counts };
   } catch (error) {
     await supabase
       .from("sync_runs")
@@ -90,8 +144,9 @@ export async function runSync(): Promise<SyncCounts> {
         status: "error",
         finished_at: new Date().toISOString(),
         error: error instanceof Error ? error.message : String(error),
+        cursor: null,
       })
-      .eq("id", run.id);
+      .eq("id", runId);
     throw error;
   }
 }
@@ -109,65 +164,100 @@ export async function runSync(): Promise<SyncCounts> {
  * written exactly once (by the albums pass); the tracks pass then only
  * touches albums it hasn't already seen, writing `saved_at: null` for those
  * (referenced but never directly saved).
+ *
+ * A large library can take longer than CHUNK_TIME_BUDGET_MS to get through —
+ * checked between pages, never mid-page — in which case this returns
+ * `done: false` with a cursor instead of finishing; the caller persists it
+ * and the next invocation resumes from exactly that pagination offset rather
+ * than restarting the whole library.
  */
-async function performSync(): Promise<SyncCounts> {
+async function performSync(
+  resumeFrom: SyncCursor | null,
+): Promise<{ done: true; counts: SyncCounts } | { done: false; cursor: SyncCursor }> {
   const supabase = getSupabaseServerClient();
-  forbiddenSkipCount = 0;
+  const deadline = Date.now() + CHUNK_TIME_BUDGET_MS;
 
   // Artists/albums already in the DB are never re-fetched from Spotify — only
   // their id is needed to skip them, not their (possibly now-stale) data. See
   // https://github.com/alexivany/spotify-library/issues for the tradeoff this
   // creates (metadata like popularity/genres/label is only ever fetched once).
+  // Re-derived fresh every chunk rather than persisted in the cursor: it's a
+  // cheap paginated read, and it naturally reflects whatever earlier chunks
+  // (this run or a prior one) have already upserted.
   const [seenArtistIds, seenAlbumIds] = await Promise.all([
     fetchExistingIds("artists"),
     fetchExistingIds("albums"),
   ]);
-  const initialArtistCount = seenArtistIds.size;
-  const initialAlbumCount = seenAlbumIds.size;
 
-  const savedAlbumIds: string[] = [];
-  const savedTrackIds: string[] = [];
+  const state: SyncCursor = resumeFrom ?? {
+    phase: "albums",
+    albumOffset: 0,
+    trackOffset: 0,
+    savedAlbumIds: [],
+    savedTrackIds: [],
+    initialArtistCount: seenArtistIds.size,
+    initialAlbumCount: seenAlbumIds.size,
+    forbiddenSkipCount: 0,
+  };
+  // recordForbiddenSkip() below mutates this module-level counter; restore it
+  // from the cursor so a resumed run keeps counting from where it left off.
+  forbiddenSkipCount = state.forbiddenSkipCount;
 
-  let offset = 0;
-  for (;;) {
-    const page = await spotifyFetch<SpotifyPagingObject<SpotifySavedAlbum>>("/me/albums", {
-      searchParams: { limit: PAGE_LIMIT, offset },
-    });
-    if (page.items.length > 0) {
-      await processSavedAlbumsPage(page.items, seenArtistIds, seenAlbumIds);
-      for (const { album } of page.items) savedAlbumIds.push(album.id);
+  if (state.phase === "albums") {
+    for (;;) {
+      const page = await spotifyFetch<SpotifyPagingObject<SpotifySavedAlbum>>("/me/albums", {
+        searchParams: { limit: PAGE_LIMIT, offset: state.albumOffset },
+      });
+      if (page.items.length > 0) {
+        await processSavedAlbumsPage(page.items, seenArtistIds, seenAlbumIds);
+        for (const { album } of page.items) state.savedAlbumIds.push(album.id);
+      }
+      state.forbiddenSkipCount = forbiddenSkipCount;
+      console.log(`[sync] albums: ${state.savedAlbumIds.length}/${page.total}`);
+      if (page.items.length < PAGE_LIMIT || state.savedAlbumIds.length >= page.total) {
+        state.phase = "tracks";
+        break;
+      }
+      state.albumOffset += PAGE_LIMIT;
+      if (Date.now() >= deadline) return { done: false, cursor: state };
     }
-    console.log(`[sync] albums: ${savedAlbumIds.length}/${page.total}`);
-    if (page.items.length < PAGE_LIMIT || savedAlbumIds.length >= page.total) break;
-    offset += PAGE_LIMIT;
   }
 
-  offset = 0;
-  for (;;) {
-    const page = await spotifyFetch<SpotifyPagingObject<SpotifySavedTrack>>("/me/tracks", {
-      searchParams: { limit: PAGE_LIMIT, offset },
-    });
-    if (page.items.length > 0) {
-      await processSavedTracksPage(page.items, seenArtistIds, seenAlbumIds);
-      for (const { track } of page.items) savedTrackIds.push(track.id);
+  if (state.phase === "tracks") {
+    for (;;) {
+      const page = await spotifyFetch<SpotifyPagingObject<SpotifySavedTrack>>("/me/tracks", {
+        searchParams: { limit: PAGE_LIMIT, offset: state.trackOffset },
+      });
+      if (page.items.length > 0) {
+        await processSavedTracksPage(page.items, seenArtistIds, seenAlbumIds);
+        for (const { track } of page.items) state.savedTrackIds.push(track.id);
+      }
+      state.forbiddenSkipCount = forbiddenSkipCount;
+      console.log(`[sync] tracks: ${state.savedTrackIds.length}/${page.total}`);
+      if (page.items.length < PAGE_LIMIT || state.savedTrackIds.length >= page.total) {
+        state.phase = "reconcile";
+        break;
+      }
+      state.trackOffset += PAGE_LIMIT;
+      if (Date.now() >= deadline) return { done: false, cursor: state };
     }
-    console.log(`[sync] tracks: ${savedTrackIds.length}/${page.total}`);
-    if (page.items.length < PAGE_LIMIT || savedTrackIds.length >= page.total) break;
-    offset += PAGE_LIMIT;
   }
 
   // Only reconcile once both passes have fully completed — this needs the
   // complete current-library id sets, not a partial one from an interrupted run.
-  const tracksUnsaved = await reconcileUnsaved(supabase, "tracks", savedTrackIds);
-  const albumsUnsaved = await reconcileUnsaved(supabase, "albums", savedAlbumIds);
+  const tracksUnsaved = await reconcileUnsaved(supabase, "tracks", state.savedTrackIds);
+  const albumsUnsaved = await reconcileUnsaved(supabase, "albums", state.savedAlbumIds);
 
   return {
-    savedTracks: savedTrackIds.length,
-    savedAlbums: savedAlbumIds.length,
-    artists: seenArtistIds.size - initialArtistCount,
-    albums: seenAlbumIds.size - initialAlbumCount,
-    tracksUnsaved,
-    albumsUnsaved,
+    done: true,
+    counts: {
+      savedTracks: state.savedTrackIds.length,
+      savedAlbums: state.savedAlbumIds.length,
+      artists: seenArtistIds.size - state.initialArtistCount,
+      albums: seenAlbumIds.size - state.initialAlbumCount,
+      tracksUnsaved,
+      albumsUnsaved,
+    },
   };
 }
 
