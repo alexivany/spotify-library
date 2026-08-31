@@ -1,7 +1,12 @@
 import { backupDatabaseToCsv } from "@/lib/backup/csv";
 import { getSupabaseServerClient } from "@/lib/supabase/server";
 import type { Json } from "@/lib/supabase/types";
-import { resetMusicBrainzCircuitBreaker, MusicBrainzUnavailableError } from "./client";
+import {
+  resetMusicBrainzCircuitBreaker,
+  setMusicBrainzChunkDeadline,
+  MusicBrainzChunkBudgetExceededError,
+  MusicBrainzUnavailableError,
+} from "./client";
 import { matchAlbum, type MatchResult } from "./match";
 
 function asJson(value: unknown): Json {
@@ -160,6 +165,10 @@ async function performEnrichment(
   const counts: EnrichmentCounts = resumeFrom ?? { candidates: 0, matched: 0, ambiguous: 0, unmatched: 0, errors: 0 };
   const cutoffIso = new Date(Date.now() - RETRY_COOLDOWN_DAYS * 24 * 60 * 60 * 1000).toISOString();
   resetMusicBrainzCircuitBreaker();
+  // A single request's own retry backoff (up to MAX_TRANSIENT_RETRIES) can
+  // otherwise burn past this whole chunk's budget before the between-
+  // candidate check below ever runs — see MusicBrainzChunkBudgetExceededError.
+  setMusicBrainzChunkDeadline(deadline);
 
   for (;;) {
     const { data, error } = await supabase
@@ -193,6 +202,10 @@ async function performEnrichment(
         if (err instanceof MusicBrainzUnavailableError) {
           console.warn(`[enrich] ${err.message}`);
           throw err;
+        }
+        if (err instanceof MusicBrainzChunkBudgetExceededError) {
+          console.warn(`[enrich] ${err.message}`);
+          return { done: false, counts };
         }
         counts.errors += 1;
         console.warn(

@@ -28,6 +28,36 @@ export class MusicBrainzUnavailableError extends Error {
   }
 }
 
+/**
+ * Thrown when the *next* backoff sleep on a single request would itself run
+ * past the current enrichment chunk's deadline. Exponential backoff (up to
+ * 2+4+8+16+32=62s across MAX_TRANSIENT_RETRIES) can exceed the entire chunk
+ * budget on just one or two stuck requests, well before
+ * MAX_CONSECUTIVE_TRANSIENT_RESPONSES is reached and long before
+ * performEnrichment's own between-candidate deadline check ever gets a turn
+ * to run — the caller is just blocked awaiting this one call the whole time.
+ * Unlike MusicBrainzUnavailableError this isn't "MusicBrainz looks down",
+ * just "not enough time left in this chunk" — the caller treats it as a
+ * clean end-of-chunk, not a run failure, and this exact candidate gets
+ * retried in the next chunk.
+ */
+export class MusicBrainzChunkBudgetExceededError extends Error {
+  constructor() {
+    super("MusicBrainz retry backoff would exceed the current chunk's time budget — ending chunk early.");
+  }
+}
+
+// Set by performEnrichment() at the start of each chunk (see
+// setMusicBrainzChunkDeadline) so a retry backoff mid-request can bail out
+// before Vercel kills the whole invocation instead. Infinity outside of an
+// enrichment run (e.g. callers that don't chunk) means this never triggers.
+let chunkDeadline = Infinity;
+
+/** Called at the start of an enrichment chunk; pass the chunk's own deadline (Date.now() + budget). */
+export function setMusicBrainzChunkDeadline(deadline: number): void {
+  chunkDeadline = deadline;
+}
+
 type MusicBrainzFetchOptions = Omit<RequestInit, "headers"> & {
   searchParams?: Record<string, string | number | undefined>;
   headers?: Record<string, string>;
@@ -130,6 +160,9 @@ export async function musicBrainzFetch<T>(
     if (isTransientStatus && transientRetries < MAX_TRANSIENT_RETRIES) {
       transientRetries += 1;
       const waitSeconds = 2 ** transientRetries;
+      if (Date.now() + waitSeconds * 1000 >= chunkDeadline) {
+        throw new MusicBrainzChunkBudgetExceededError();
+      }
       console.warn(
         `[musicbrainz] ${res.status} on ${url.pathname} (attempt ${transientRetries}/${MAX_TRANSIENT_RETRIES}), retrying in ${waitSeconds}s`,
       );
