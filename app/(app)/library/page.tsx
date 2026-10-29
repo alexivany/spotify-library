@@ -107,6 +107,8 @@ export default async function LibraryPage({
         ) : (
           <ResultsTable
             view={filters.view}
+            sort={filters.sort}
+            searchParams={toURLSearchParams(sp)}
             items={items}
             folders={folders}
             tags={tags}

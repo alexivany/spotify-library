@@ -9,7 +9,8 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { formatDate, formatDuration } from "@/lib/library/format";
-import type { LibraryAlbumItem, LibraryTrackItem, LibraryView } from "@/lib/library/types";
+import type { LibraryAlbumItem, LibraryTrackItem, LibraryView, SortOption } from "@/lib/library/types";
+import { SortableTableHead } from "./sortable-table-head";
 import { ItemActions } from "./item-actions";
 import { LibraryRowMenu } from "./item-context-menu";
 import { buildAlbumMenuData, buildTrackMenuData, filterHref } from "@/lib/library/menu-data";
@@ -83,6 +84,8 @@ export function ExplicitTag() {
 
 export function ResultsTable({
   view,
+  sort,
+  searchParams,
   items,
   folders,
   tags,
@@ -90,6 +93,8 @@ export function ResultsTable({
   itemTagIds,
 }: {
   view: LibraryView;
+  sort: SortOption;
+  searchParams: URLSearchParams;
   items: (LibraryTrackItem | LibraryAlbumItem)[];
   folders: NamedItem[];
   tags: NamedItem[];
@@ -112,11 +117,11 @@ export function ResultsTable({
           <TableHeader>
             <TableRow>
               <TableHead className="w-12" />
-              <TableHead>Track</TableHead>
-              <TableHead className="hidden md:table-cell">Album</TableHead>
-              <TableHead>Artist</TableHead>
-              <TableHead className="hidden lg:table-cell">Release date</TableHead>
-              <TableHead className="hidden lg:table-cell">Label</TableHead>
+              <SortableTableHead label="Track" sortKey="name" sort={sort} searchParams={searchParams} />
+              <SortableTableHead label="Album" sortKey="album" sort={sort} searchParams={searchParams} className="hidden md:table-cell" />
+              <SortableTableHead label="Artist" sortKey="artist" sort={sort} searchParams={searchParams} />
+              <SortableTableHead label="Release date" sortKey="release_date" sort={sort} searchParams={searchParams} className="hidden lg:table-cell" />
+              <SortableTableHead label="Label" sortKey="label" sort={sort} searchParams={searchParams} className="hidden lg:table-cell" />
               <TableHead className="hidden text-right sm:table-cell">Duration</TableHead>
               <TableHead className="hidden md:table-cell">Saved</TableHead>
               <TableHead className="text-right">Actions</TableHead>
@@ -183,11 +188,11 @@ export function ResultsTable({
         <TableHeader>
           <TableRow>
             <TableHead className="w-12" />
-            <TableHead>Album</TableHead>
-            <TableHead>Artist</TableHead>
+            <SortableTableHead label="Album" sortKey={sort.startsWith("album-") ? "album" : "name"} sort={sort} searchParams={searchParams} />
+            <SortableTableHead label="Artist" sortKey="artist" sort={sort} searchParams={searchParams} />
             <TableHead className="hidden md:table-cell">Type</TableHead>
-            <TableHead className="hidden lg:table-cell">Release date</TableHead>
-            <TableHead className="hidden lg:table-cell">Label</TableHead>
+            <SortableTableHead label="Release date" sortKey="release_date" sort={sort} searchParams={searchParams} className="hidden lg:table-cell" />
+            <SortableTableHead label="Label" sortKey="label" sort={sort} searchParams={searchParams} className="hidden lg:table-cell" />
             <TableHead className="hidden text-right sm:table-cell">Tracks</TableHead>
             <TableHead className="hidden md:table-cell">Saved</TableHead>
             <TableHead className="text-right">Actions</TableHead>

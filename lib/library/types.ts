@@ -5,7 +5,7 @@ export type AlbumType = "album" | "single" | "compilation";
 
 export const GRID_CARD_SIZES: GridCardSize[] = ["small", "medium", "large"];
 
-export type SortKey = "saved_at" | "name" | "popularity" | "release_date";
+export type SortKey = "saved_at" | "name" | "artist" | "album" | "label" | "popularity" | "release_date";
 export type SortDirection = "asc" | "desc";
 export type SortOption = `${SortKey}-${SortDirection}`;
 
@@ -14,6 +14,12 @@ export const SORT_OPTIONS: { value: SortOption; label: string }[] = [
   { value: "saved_at-asc", label: "Oldest saved" },
   { value: "name-asc", label: "Name (A-Z)" },
   { value: "name-desc", label: "Name (Z-A)" },
+  { value: "artist-asc", label: "Artist (A-Z)" },
+  { value: "artist-desc", label: "Artist (Z-A)" },
+  { value: "album-asc", label: "Album (A-Z)" },
+  { value: "album-desc", label: "Album (Z-A)" },
+  { value: "label-asc", label: "Label (A-Z)" },
+  { value: "label-desc", label: "Label (Z-A)" },
   { value: "release_date-desc", label: "Newest release" },
   { value: "release_date-asc", label: "Oldest release" },
   { value: "popularity-desc", label: "Most popular" },

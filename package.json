@@ -9,6 +9,7 @@
     "db:setup": "bash scripts/setup-local-db.sh",
     "db:restore": "bun scripts/restore-backup.ts",
     "update-types": "supabase gen types typescript --local > lib/supabase/types.ts",
+    "test": "bun test tests",
     "build": "next build",
     "start": "next start",
     "lint": "eslint"

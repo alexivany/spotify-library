@@ -2,6 +2,7 @@ import { getSupabaseServerClient } from "@/lib/supabase/server";
 import {
   ALBUM_TYPES,
   DEFAULT_PAGE_SIZE,
+  SORT_OPTIONS,
   type AlbumType,
   type LibraryAlbumItem,
   type LibraryFilters,
@@ -9,6 +10,7 @@ import {
   type LibraryTrackItem,
   type LibraryView,
   type SortOption,
+  type SortKey,
 } from "./types";
 
 type RawSearchParams = Record<string, string | string[] | undefined>;
@@ -29,16 +31,19 @@ function parseNumber(value: string | string[] | undefined): number | undefined {
   return Number.isFinite(n) ? n : undefined;
 }
 
-const VALID_SORTS = new Set<SortOption>([
-  "saved_at-desc",
-  "saved_at-asc",
-  "name-asc",
-  "name-desc",
-  "release_date-desc",
-  "release_date-asc",
-  "popularity-desc",
-  "popularity-asc",
-]);
+const VALID_SORTS = new Set<SortOption>(SORT_OPTIONS.map(({ value }) => value));
+
+function sortColumnFor(view: LibraryView, key: SortKey): string {
+  // Sort by the primary artist credited in the Spotify snapshot, including
+  // historical aliases (e.g. Lex Walton for Alex Walton). Display names from
+  // the artists table can change independently. Keep this in SQL so the whole
+  // filtered library is ordered before pagination.
+  if (key === "artist") return "raw->artists->0->>name";
+  if (key === "album") return view === "tracks" ? "albums(name)" : "name";
+  if (key === "label") return view === "tracks" ? "albums(resolved_label)" : "resolved_label";
+  if (key === "release_date" && view === "tracks") return "albums(release_date)";
+  return key;
+}
 
 export function parseLibraryFilters(searchParams: RawSearchParams): LibraryFilters {
   const view: LibraryView = first(searchParams.view) === "albums" ? "albums" : "tracks";
@@ -211,12 +216,12 @@ async function queryTracks(filters: LibraryFilters): Promise<LibraryQueryResult<
   const idFilter = await resolveIdFilter(filters);
   if (idFilter) query = query.in("id", idFilter);
 
-  const [sortColumn, sortDirection] = filters.sort.split("-") as [string, "asc" | "desc"];
+  const [sortKey, sortDirection] = filters.sort.split("-") as [SortKey, "asc" | "desc"];
   const ascending = sortDirection === "asc";
-  query =
-    sortColumn === "release_date"
-      ? query.order("release_date", { referencedTable: "albums", ascending })
-      : query.order(sortColumn, { ascending });
+  const sortColumn = sortColumnFor("tracks", sortKey);
+  query = query.order(sortColumn, { ascending, nullsFirst: false });
+  if (sortColumn !== "name") query = query.order("name", { ascending: true });
+  query = query.order("id", { ascending: true });
 
   const from = (filters.page - 1) * filters.pageSize;
   const to = from + filters.pageSize - 1;
@@ -279,9 +284,12 @@ async function queryAlbums(filters: LibraryFilters): Promise<LibraryQueryResult<
   const idFilter = await resolveIdFilter(filters);
   if (idFilter) query = query.in("id", idFilter);
 
-  const [sortColumn, sortDirection] = filters.sort.split("-") as [string, "asc" | "desc"];
+  const [sortKey, sortDirection] = filters.sort.split("-") as [SortKey, "asc" | "desc"];
   const ascending = sortDirection === "asc";
-  query = query.order(sortColumn, { ascending });
+  const sortColumn = sortColumnFor("albums", sortKey);
+  query = query.order(sortColumn, { ascending, nullsFirst: false });
+  if (sortColumn !== "name") query = query.order("name", { ascending: true });
+  query = query.order("id", { ascending: true });
 
   const from = (filters.page - 1) * filters.pageSize;
   const to = from + filters.pageSize - 1;
