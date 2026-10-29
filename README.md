@@ -1,233 +1,119 @@
 # Spotify Library Manager
 
-A personal web app to browse, filter, search, organize, and export your entire
-Spotify library (saved songs + saved albums). It mirrors your library into a
-self-hosted Supabase (Postgres) database, enriches it with artist genres and
-album labels during sync, and runs all filtering/search/export against fast
-local SQL — since Spotify's public API can't filter by genre or label at
-library scale. It also cross-references [MusicBrainz](https://musicbrainz.org/doc/MusicBrainz_API)
-to fill in album genre/label data now that Spotify's own fields are often
-missing or stale.
+Browse, search, sort, organize and export your saved Spotify tracks and albums.
+The app mirrors one Spotify library into your own Supabase database and can add
+album labels and genres from MusicBrainz. Your instance is protected by a password.
+This is a **single-user app**: everyone with access sees the same library.
 
-Single-user, local-first tool: one Spotify account, no login screen, no
-per-user isolation.
+## Start here
 
-## Tech stack
+You can run everything on your computer, use a hosted database without Docker,
+or deploy your own private instance to Vercel.
 
-- Next.js 16 (App Router), React 19, TypeScript, Tailwind CSS 4, shadcn/ui
-- Self-hosted Supabase (Postgres) via the Supabase CLI + Docker
-- `@supabase/supabase-js` (service role key, server-side only)
-- bun as package manager
-- Spotify Web API (Authorization Code flow, `user-library-read` scope)
-
-## Prerequisites
-
-- [bun](https://bun.sh)
-- [Docker](https://www.docker.com/products/docker-desktop/) (for self-hosted Supabase)
-- [Supabase CLI](https://supabase.com/docs/guides/local-development/cli/getting-started)
-- A Spotify account and a [Spotify Developer](https://developer.spotify.com/dashboard) app
-
-## Setup
-
-### 1. Install dependencies
+1. Check that you can create/access an app in the
+   [Spotify Developer Dashboard](https://developer.spotify.com/dashboard).
+   Spotify currently requires **Premium for development-mode app owners**.
+2. Install [Git](https://git-scm.com/downloads), [Node.js 22+](https://nodejs.org/en/download)
+   and [Bun](https://bun.com/docs/installation).
+3. Clone and run the guided setup:
 
 ```bash
-bun install
+git clone https://github.com/alexivany/spotify-library.git
+cd spotify-library
+bun install --frozen-lockfile
+bun run setup
 ```
 
-### 2. Start self-hosted Supabase and apply the schema
+The wizard explains where to create accounts and find keys, hides secret input,
+generates session/cron secrets, saves your Spotify connection automatically, and
+checks the configuration. You can stop and resume it. Local settings go in
+`.env.local`; Vercel settings go in `.env.vercel`. Both are gitignored.
 
-```bash
-supabase start
-```
+**[Complete setup walkthrough →](docs/SETUP.md)** — account signup, API keys,
+local startup, private Vercel deployment, troubleshooting and upgrades.
 
-This prints local API/DB URLs and keys, including a **Secret** key (the local
-service-role equivalent). The migration in `supabase/migrations/0001_init.sql`
-is applied automatically on `supabase start`; to (re-)apply it manually:
+**[AI-guided companion →](docs/AI_SETUP.md)** — a ready-to-paste prompt for an AI
+coding assistant to guide the process without collecting your secrets in chat.
+No AI subscription or API key is needed to run the app or setup wizard.
 
-```bash
-supabase db reset   # re-applies all migrations from scratch
-```
-
-### 3. Create a Spotify app
-
-1. Go to the [Spotify Developer Dashboard](https://developer.spotify.com/dashboard) → create an app.
-2. Add the redirect URI **`http://127.0.0.1:3000/api/spotify/callback`** exactly
-   (Spotify requires the loopback IP, not `localhost`, for `http`).
-3. Leave the app in Development mode — fine for personal use.
-4. Copy the **Client ID** and **Client Secret**.
-
-### 4. Configure environment variables
-
-Copy the example file and fill it in:
-
-```bash
-cp .env.local.example .env.local
-```
-
-| Variable | Where it comes from |
-| --- | --- |
-| `SPOTIFY_CLIENT_ID` / `SPOTIFY_CLIENT_SECRET` | Spotify Developer Dashboard |
-| `SPOTIFY_REDIRECT_URI` | `http://127.0.0.1:3000/api/spotify/callback` |
-| `SPOTIFY_REFRESH_TOKEN` | Obtained in step 5 below |
-| `SUPABASE_URL` / `SUPABASE_SERVICE_ROLE_KEY` | Output of `supabase start` (`API URL` / `Secret` key) |
-| `CRON_SECRET` | Any random string you choose, only needed for scheduled sync/enrichment |
-| `MUSICBRAINZ_CONTACT_EMAIL` | Your email — MusicBrainz requires a contact identifier in every request's User-Agent |
-| `MUSICBRAINZ_MIN_REQUEST_INTERVAL_MS` | Optional, defaults to `1100`. Don't lower below `1000` — MusicBrainz enforces 1 req/sec for anonymous use |
-
-### 5. First-run OAuth (once)
-
-Start the dev server:
+After local setup:
 
 ```bash
 bun run dev
 ```
 
-Visit **http://127.0.0.1:3000/api/spotify/login** in your browser and complete
-the Spotify sign-in. You'll land on a page showing a **refresh token** —
-copy it into `.env.local` as `SPOTIFY_REFRESH_TOKEN`, then restart the dev
-server. This token is shown once and isn't stored or logged anywhere by the
-app; all future syncs silently refresh the access token from it.
+Open **http://127.0.0.1:3000/login**, enter your chosen app password, and click
+**Sync now**. Keep the tab open while the initial sync runs. On subsequent starts,
+`bun run dev` preserves your chosen local or hosted database.
 
-### 6. Sync your library
+## Useful commands
 
-Click **Sync now** in the header (or `POST /api/spotify/sync`). This pages
-through `/me/tracks` and `/me/albums`, enriches artists/albums with genres and
-labels, and upserts everything into Postgres. Sync history is recorded in the
-`sync_runs` table and summarized in the header.
+| Command | Purpose |
+| --- | --- |
+| `bun run setup` | Configure or resume setup interactively |
+| `bun run setup --target vercel` | Prepare a separate `.env.vercel` profile |
+| `bun run setup:spotify` | Connect/reconnect Spotify without copying tokens |
+| `bun run setup:doctor` | Check configuration, schema and Spotify library access |
+| `bun run setup:doctor --target vercel` | Check the Vercel profile |
+| `bun run setup:sql` | Generate the schema for a **new, empty** hosted project |
+| `bun run dev` | Start the chosen database (if local) and the app |
+| `bun run dev:next` | Start only Next.js; leave database startup to you |
+| `bun run db:setup` | Start local Supabase and apply pending local migrations |
+| `bun run test` / `bun run lint` / `bun run build` | Verify changes, in that order |
+| `bun run typecheck:setup` | Type-check the setup and startup scripts |
+| `bun run check` | Run tests, lint and the production build; stop on the first failure |
+| `bun run hooks:install` | Install/reinstall this checkout's pre-commit hook |
 
-### 7. Enrich albums with MusicBrainz data (optional, but recommended)
+`bun run dev:fresh` **deletes the local database and recreates it**. It is a
+recovery/development command, not a normal setup step. Normal setup never resets
+volumes or stops another project's Supabase containers.
 
-Click **Enrich now** in the header (or `POST /api/musicbrainz/enrich`). This
-looks up each saved album on MusicBrainz — first via its Spotify URL
-relationship, falling back to a fuzzy artist/title search — and fills in
-`musicbrainz_label`/`musicbrainz_genres` where a confident match is found.
-The label filter and genre facets automatically prefer this data over
-Spotify's when present (via the `resolved_label` column and the
-`album_genres`/`track_genres` views).
+## Before committing
 
-MusicBrainz enforces **1 request/second** for anonymous use with no path to a
-higher quota, so a first-time backfill of a large library is slow — roughly
-35–90 minutes for 1000 albums, depending on how many need the fuzzy-search
-fallback. This is expected, not a hang. Subsequent runs only touch new albums
-and ones past the 7-day retry cooldown (for albums MusicBrainz couldn't
-confidently match), so they're fast. Progress and match results are recorded
-in `enrichment_runs` and summarized in the header.
+`bun install` installs the tracked `.githooks/pre-commit` hook in this checkout.
+Every commit runs **tests → lint → production build**, in that order, and any
+failure blocks the commit. Run `bun run check` before pushing as well. Fix failures
+instead of bypassing the hook. Dependencies must be installed before committing.
+
+If install scripts were disabled, run `bun run hooks:install` once. The installer
+skips CI/Vercel and source archives, and never changes global Git settings. If you
+already use a custom `core.hooksPath`, it preserves that configuration and asks
+you to add `bun run check` to your existing pre-commit hook.
 
 ## Using the app
 
-- **`/library`** — browse saved tracks or albums, filter by content type,
-  genre, release date, label, saved date, popularity, duration, explicit,
-  folder, or tag, full-text search across track/album/artist names, sort, and
-  paginate. Every filter is reflected in the URL, so views are shareable.
-- **Folders/Tags row actions** — each row has "Folders" and "Tags" popovers to
-  assign/unassign the item to your own folders and tags (optimistic UI).
-- **`/folders`, `/folders/[id]`** — create/rename/delete folders and manage
-  their contents.
-- **`/tags`** — create/rename/delete tags (with color).
-- **Export CSV** — on `/library`, "Export filtered CSV" exports the current
-  filtered view; "Export all CSV" exports the whole library regardless of
-  filters. Columns include resolved genres and joined folder/tag names.
+- **Library:** switch tracks/albums and grid/list views; search and filter by
+  genre, label, date, content type, popularity, duration, explicit content,
+  folders and tags. Click list headers to toggle ascending/descending order.
+- **Folders and tags:** organize items from their row actions or context menus.
+- **CSV export:** download the filtered view or the whole library.
+- **Sync now:** import additions and removals from Spotify. Large libraries run
+  in resumable chunks; the UI requests the next chunk while the tab stays open.
+- **Enrich now:** optionally add MusicBrainz labels/genres. Set your contact
+  email first. The service is rate limited, so large backfills take time.
 
-## Scheduled sync (optional)
+Local sync attempts CSV backups under the ignored `backups/` directory. Vercel's
+filesystem is not durable backup storage; use Supabase backups and downloaded
+exports for hosted instances. See the walkthrough for scheduling and recovery.
 
-Manual sync via the button always works; scheduled sync is optional. It's
-guarded by a bearer token so it can be safely triggered from outside the app:
+## Stack and layout
 
-```bash
-curl -X POST http://127.0.0.1:3000/api/cron/sync \
-  -H "Authorization: Bearer $CRON_SECRET"
-```
+Next.js 16 App Router, React 19, TypeScript, Tailwind CSS 4, shadcn/ui, Bun,
+Supabase/Postgres, Spotify Authorization Code flow (`user-library-read`). All
+Supabase access uses a server-only secret/service role key. The password gate
+protects pages and API routes; cron routes use their own bearer secret.
 
-To trigger it nightly from your self-hosted Supabase via `pg_cron` + `pg_net`,
-run this once against your database (e.g. in Supabase Studio's SQL editor):
-
-```sql
-create extension if not exists pg_cron;
-create extension if not exists pg_net;
-
-select cron.schedule(
-  'nightly-spotify-sync',
-  '0 3 * * *', -- 3am daily
-  $$
-  select net.http_post(
-    url := 'http://host.docker.internal:3000/api/cron/sync',
-    headers := jsonb_build_object(
-      'Authorization', 'Bearer YOUR_CRON_SECRET',
-      'Content-Type', 'application/json'
-    ),
-    body := '{}'::jsonb
-  );
-  $$
-);
-```
-
-Notes:
-- `host.docker.internal` lets the Postgres container (run by the Supabase CLI
-  under Docker) reach the Next.js dev server running on your host machine.
-  This works on Docker Desktop for Mac/Windows; on Linux you may need the
-  container's host-gateway address instead.
-- Replace `YOUR_CRON_SECRET` with the same value as `CRON_SECRET` in
-  `.env.local`.
-- To remove the schedule: `select cron.unschedule('nightly-spotify-sync');`
-- If you deploy the app somewhere with a stable URL, point `url` there instead.
-
-Scheduled MusicBrainz enrichment works the same way, against its own route —
-kept separate from the sync schedule since it's much slower:
-
-```sql
-select cron.schedule(
-  'nightly-musicbrainz-enrich',
-  '0 4 * * *', -- 4am daily, after the sync above
-  $$
-  select net.http_post(
-    url := 'http://host.docker.internal:3000/api/cron/musicbrainz',
-    headers := jsonb_build_object(
-      'Authorization', 'Bearer YOUR_CRON_SECRET',
-      'Content-Type', 'application/json'
-    ),
-    body := '{}'::jsonb
-  );
-  $$
-);
-```
-
-## Verification checklist
-
-1. `bun install`, `supabase start` — confirm the migration applied cleanly.
-2. Visit `/api/spotify/login` → confirm you land on the refresh-token page →
-   paste it into `.env.local` → restart the dev server.
-3. Click **Sync now** → confirm `sync_runs` completes with `status: success`
-   and `tracks`/`albums`/`artists` populate with genres and labels present.
-4. Exercise each filter (genre, label, release-date range, content type,
-   search, explicit, popularity, duration, saved date) on `/library`.
-5. Create a folder and a tag, assign them to a few items via the row actions,
-   then filter `/library` by that folder/tag and confirm the results.
-6. Export a filtered CSV and an "export all" CSV; open in a spreadsheet and
-   confirm columns, escaping, and joined genres/folders/tags.
-7. (Optional) Trigger `/api/cron/sync` with the bearer token; confirm a new
-   `sync_runs` row.
-8. Click **Enrich now** → confirm `enrichment_runs` completes with
-   `status: success` and `musicbrainz_label`/`musicbrainz_genres` populate on
-   matched albums; re-run and confirm already-matched albums are skipped.
-9. Confirm the label filter/facet and genre filter/facet on `/library`
-   reflect MusicBrainz data, and that CSV export columns match.
-
-## Project structure
-
-```
-app/library/                  filter sidebar, results table, pagination, export
-app/folders/, app/tags/       folder & tag management pages
-app/api/spotify/{login,callback,sync}/   Spotify OAuth + manual sync
-app/api/cron/sync/            scheduled sync (CRON_SECRET-guarded)
-app/api/musicbrainz/enrich/   manual MusicBrainz enrichment trigger
-app/api/cron/musicbrainz/     scheduled enrichment (CRON_SECRET-guarded)
-app/api/{folders,tags,items,export}/     folder/tag CRUD + CSV export
-lib/spotify/{client,token,sync}.ts       Spotify API client + sync pipeline
-lib/musicbrainz/{client,match,enrich}.ts MusicBrainz client + matching + enrichment pipeline
-lib/library/{query,types,url,format}.ts  filter/search query builder
-lib/export/csv.ts              RFC-4180 CSV encoder
-lib/supabase/server.ts          Supabase service-role client
-supabase/migrations/0001_init.sql   schema, indexes, genre views
-supabase/migrations/0002_musicbrainz_enrichment.sql   MusicBrainz columns, resolved_label, enrichment_runs
+```text
+app/(app)/library/          browsing, filters, results, sorting and export links
+app/(app)/folders/, tags/   personal organization
+app/api/                   OAuth, auth, sync, enrichment, export and CRUD
+lib/spotify/               Spotify API client and resumable sync
+lib/musicbrainz/           album matching and resumable enrichment
+lib/library/               SQL queries, filters and URL state
+lib/supabase/              server client and generated database types
+scripts/setup.ts           setup wizard and diagnostic commands
+scripts/setup/             configuration, local DB, OAuth and prompts
+supabase/migrations/       complete schema, permissions and cursor migrations
+docs/SETUP.md              human setup guide
+docs/AI_SETUP.md           AI-guided setup instructions
 ```
