@@ -178,9 +178,9 @@ async function performSync(
   const deadline = Date.now() + CHUNK_TIME_BUDGET_MS;
 
   // Artists/albums already in the DB are never re-fetched from Spotify — only
-  // their id is needed to skip them, not their (possibly now-stale) data. See
-  // https://github.com/alexivany/spotify-library/issues for the tradeoff this
-  // creates (metadata like popularity/genres/label is only ever fetched once).
+  // their id is needed to skip them, not their (possibly now-stale) data.
+  // This saves API requests, but metadata like popularity/genres/label is
+  // only ever fetched once and can become stale.
   // Re-derived fresh every chunk rather than persisted in the cursor: it's a
   // cheap paginated read, and it naturally reflects whatever earlier chunks
   // (this run or a prior one) have already upserted.

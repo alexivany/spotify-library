@@ -38,7 +38,7 @@ git --version
 node --version
 bun --version
 
-git clone https://github.com/alexivany/spotify-library.git
+git clone https://github.com/alexivany/spotify-library-release.git spotify-library
 cd spotify-library
 bun install --frozen-lockfile
 bun run setup

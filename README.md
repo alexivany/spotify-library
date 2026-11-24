@@ -25,7 +25,7 @@ or deploy your own private instance to Vercel.
 3. Clone and run the guided setup:
 
 ```bash
-git clone https://github.com/alexivany/spotify-library.git
+git clone https://github.com/alexivany/spotify-library-release.git spotify-library
 cd spotify-library
 bun install --frozen-lockfile
 bun run setup
