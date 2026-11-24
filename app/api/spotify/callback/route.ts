@@ -3,11 +3,23 @@ import { NextRequest, NextResponse } from "next/server";
 const TOKEN_URL = "https://accounts.spotify.com/api/token";
 const STATE_COOKIE = "spotify_auth_state";
 
+function escapeHtml(value: string): string {
+  return value.replace(/[&<>"']/g, (character) => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
+  })[character]!);
+}
+
 function htmlPage(body: string) {
   return new NextResponse(
     `<!doctype html><html><head><meta charset="utf-8"><title>Spotify OAuth</title></head>` +
       `<body style="font-family: system-ui, sans-serif; max-width: 640px; margin: 4rem auto; line-height: 1.5;">${body}</body></html>`,
-    { headers: { "Content-Type": "text/html; charset=utf-8" } },
+    { headers: {
+      "Content-Type": "text/html; charset=utf-8",
+      "Cache-Control": "no-store",
+      "Referrer-Policy": "no-referrer",
+      "X-Content-Type-Options": "nosniff",
+      "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'",
+    } },
   );
 }
 
@@ -19,7 +31,7 @@ export async function GET(request: NextRequest) {
   const storedState = request.cookies.get(STATE_COOKIE)?.value;
 
   if (authError) {
-    return htmlPage(`<h1>Spotify authorization failed</h1><p>${authError}</p>`);
+    return htmlPage(`<h1>Spotify authorization failed</h1><p>${escapeHtml(authError)}</p>`);
   }
 
   if (!code || !state || state !== storedState) {
@@ -56,7 +68,7 @@ export async function GET(request: NextRequest) {
 
   if (!tokenRes.ok || !tokenJson.refresh_token) {
     return htmlPage(
-      `<h1>Token exchange failed</h1><pre>${JSON.stringify(tokenJson, null, 2)}</pre>`,
+      `<h1>Token exchange failed</h1><p>Check your Spotify app credentials and redirect URI, then try connecting again.</p>`,
     );
   }
 
@@ -64,7 +76,7 @@ export async function GET(request: NextRequest) {
     `<h1>Spotify connected</h1>` +
       `<p>Copy this refresh token into <code>.env.local</code> as <code>SPOTIFY_REFRESH_TOKEN</code>. ` +
       `It is shown only once and is not stored anywhere by this app.</p>` +
-      `<pre style="background:#f4f4f4;padding:1rem;border-radius:6px;overflow-wrap:anywhere;white-space:pre-wrap;">${tokenJson.refresh_token}</pre>` +
+      `<pre style="background:#f4f4f4;padding:1rem;border-radius:6px;overflow-wrap:anywhere;white-space:pre-wrap;">${escapeHtml(tokenJson.refresh_token)}</pre>` +
       `<p>After saving it, restart the dev server and use "Sync now" on <a href="/library">/library</a>.</p>`,
   );
   response.cookies.delete(STATE_COOKIE);

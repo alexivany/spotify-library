@@ -1,16 +1,12 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
+import { safeNext } from "@/lib/auth-redirect";
 import {
   SESSION_COOKIE_NAME,
   SESSION_MAX_AGE_SECONDS,
   createSessionToken,
   verifyPassword,
 } from "@/lib/auth";
-
-/** Only allow same-origin relative redirects, never protocol-relative (`//`). */
-function safeNext(value: string): string {
-  return value.startsWith("/") && !value.startsWith("//") ? value : "/";
-}
 
 export async function POST(request: NextRequest) {
   const form = await request.formData();

@@ -71,7 +71,9 @@ export async function backupDatabaseToCsv(
   baseDir: string = path.join(process.cwd(), "backups"),
 ): Promise<{ dir: string; files: string[] }> {
   const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
-  const dir = path.join(baseDir, timestamp);
+  // This is an output directory, not a bundled input. Do not trace private
+  // local backups or the project tree into serverless deployment artifacts.
+  const dir = path.join(/* turbopackIgnore: true */ baseDir, timestamp);
   await fs.mkdir(dir, { recursive: true });
 
   const files: string[] = [];

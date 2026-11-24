@@ -43,6 +43,19 @@ yarn-error.log*
 
 # scratch/plan notes
 /tmp
+/.claude/
+/.codex/
+/.agents/
+/.mcp.json
+
+# Local exports, database dumps, and private keys
+*.csv
+*.dump
+*.sqlite
+*.sqlite3
+*.key
+*.p12
+*.pfx
 
 # vercel
 .vercel

@@ -27,6 +27,7 @@ export async function GET() {
   const response = NextResponse.redirect(`${AUTHORIZE_URL}?${params}`);
   response.cookies.set(STATE_COOKIE, state, {
     httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
     maxAge: 600,
     sameSite: "lax",
     path: "/",

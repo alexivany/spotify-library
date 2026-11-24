@@ -1,10 +1,6 @@
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-
-function safeNext(value: string | undefined): string {
-  if (!value) return "/";
-  return value.startsWith("/") && !value.startsWith("//") ? value : "/";
-}
+import { safeNext } from "@/lib/auth-redirect";
 
 export default async function LoginPage({
   searchParams,

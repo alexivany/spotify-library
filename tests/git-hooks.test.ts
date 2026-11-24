@@ -12,7 +12,10 @@ async function fixture() {
   const dir = await mkdtemp(path.join(os.tmpdir(), "spotify-git-hooks-"));
   temporary.push(dir);
   // A test can itself run inside a hook. Do not inherit its index or Git directory.
-  const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith("GIT_")));
+  const env = {
+    ...Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith("GIT_"))),
+    NODE_ENV: process.env.NODE_ENV ?? "test",
+  };
   Object.assign(env, {
     CI: "", VERCEL: "", GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: "/dev/null",
     GIT_AUTHOR_NAME: "Hook Test", GIT_AUTHOR_EMAIL: "hook@example.test",

@@ -5,6 +5,13 @@ The app mirrors one Spotify library into your own Supabase database and can add
 album labels and genres from MusicBrainz. Your instance is protected by a password.
 This is a **single-user app**: everyone with access sees the same library.
 
+Licensed under [GNU GPL v3.0 only](LICENSE). Copyright (C) 2026 Alex Ivany and
+contributors. Bundled [fonts](app/fonts/README.md) retain their SIL OFL licenses;
+see [third-party notices](THIRD_PARTY_NOTICES.md) for copied components and assets.
+Dependencies retain their own licenses. This project is not affiliated with
+Spotify, and the software license does not grant rights to Spotify content.
+See [contributing](CONTRIBUTING.md) and [security and privacy](SECURITY.md).
+
 ## Start here
 
 You can run everything on your computer, use a hosted database without Docker,

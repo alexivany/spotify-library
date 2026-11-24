@@ -35,7 +35,7 @@ const VALID_SORTS = new Set<SortOption>(SORT_OPTIONS.map(({ value }) => value));
 
 function sortColumnFor(view: LibraryView, key: SortKey): string {
   // Sort by the primary artist credited in the Spotify snapshot, including
-  // historical aliases (e.g. Lex Walton for Alex Walton). Display names from
+  // historical aliases. Display names from
   // the artists table can change independently. Keep this in SQL so the whole
   // filtered library is ordered before pagination.
   if (key === "artist") return "raw->artists->0->>name";
