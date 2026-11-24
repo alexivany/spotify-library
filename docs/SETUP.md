@@ -30,7 +30,7 @@ and limits during signup. Local Docker needs no Supabase cloud account.
 
 ## 2. Install and clone
 
-Install [Git](https://git-scm.com/downloads), [Node.js 22 or later](https://nodejs.org/en/download)
+Install [Git](https://git-scm.com/downloads), [Node.js 22.13 or later](https://nodejs.org/en/download)
 and [Bun](https://bun.com/docs/installation). Open a new terminal and check:
 
 ```bash
@@ -222,7 +222,7 @@ Do not put production credentials into Preview deployments from untrusted branch
 
 Use **Next.js** as the framework, the repository root as the root directory,
 `bun install --frozen-lockfile` as the install command and `bun run build` as the
-build command. Use a supported Node.js version, 22 or later. There is no custom
+build command. Use a supported Node.js version, 22.13 or later. There is no custom
 output directory and no static export. Deploy after the environment is configured.
 
 ### Make the deployment private and verify it

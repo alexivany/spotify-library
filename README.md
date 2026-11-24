@@ -20,7 +20,7 @@ or deploy your own private instance to Vercel.
 1. Check that you can create/access an app in the
    [Spotify Developer Dashboard](https://developer.spotify.com/dashboard).
    Spotify currently requires **Premium for development-mode app owners**.
-2. Install [Git](https://git-scm.com/downloads), [Node.js 22+](https://nodejs.org/en/download)
+2. Install [Git](https://git-scm.com/downloads), [Node.js 22.13+](https://nodejs.org/en/download)
    and [Bun](https://bun.com/docs/installation).
 3. Clone and run the guided setup:
 
