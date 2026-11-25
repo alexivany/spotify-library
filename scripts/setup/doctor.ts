@@ -17,6 +17,7 @@ export async function checkSetup(env: Env, target?: Target): Promise<Check[]> {
     album_artists: "album_id", track_artists: "track_id", folders: "id",
     folder_items: "folder_id", tags: "id", item_tags: "tag_id",
     sync_runs: "id,cursor", enrichment_runs: "id,cursor",
+    musicbrainz_enrichment_state: "id,lease_token,lease_expires_at,heartbeat_at,retry_after,no_progress_chunks",
     album_genres: "album_id", track_genres: "track_id",
   })) {
     try {

@@ -3,7 +3,7 @@ import path from "node:path";
 import { getSupabaseServerClient } from "@/lib/supabase/server";
 import type { Database } from "@/lib/supabase/types";
 
-/** Every base table in the schema — mirrors supabase/migrations, not the derived album_genres/track_genres views. */
+/** Durable user data and run history; transient coordination leases are deliberately excluded. */
 const BACKUP_TABLES: (keyof Database["public"]["Tables"])[] = [
   "artists",
   "albums",

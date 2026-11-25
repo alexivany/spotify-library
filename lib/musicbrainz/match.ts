@@ -1,4 +1,4 @@
-import { MusicBrainzApiError, musicBrainzFetch } from "./client";
+import { MusicBrainzApiError, musicBrainzFetch, type MusicBrainzFetcher } from "./client";
 import type {
   MusicBrainzReleaseDetail,
   MusicBrainzReleaseGroupDetail,
@@ -42,14 +42,14 @@ const MAX_TRACK_COUNT_DRIFT = 2;
 
 const MAX_GENRES = 8;
 
-export async function matchAlbum(album: AlbumToMatch): Promise<MatchResult> {
-  const urlMatchId = await findReleaseByStreamingUrl(album.id);
+export async function matchAlbum(album: AlbumToMatch, request: MusicBrainzFetcher = musicBrainzFetch): Promise<MatchResult> {
+  const urlMatchId = await findReleaseByStreamingUrl(album.id, request);
   if (urlMatchId) {
-    return withReleaseDetail(urlMatchId, 100, "matched");
+    return withReleaseDetail(urlMatchId, 100, "matched", request);
   }
 
   if (!album.primaryArtistName) return UNMATCHED;
-  return matchByFuzzySearch(album);
+  return matchByFuzzySearch(album, request);
 }
 
 /**
@@ -58,10 +58,10 @@ export async function matchAlbum(album: AlbumToMatch): Promise<MatchResult> {
  * fuzzy logic needed. A 404 here just means no one has registered that
  * relationship; it's the common case, not an error.
  */
-async function findReleaseByStreamingUrl(spotifyAlbumId: string): Promise<string | null> {
+async function findReleaseByStreamingUrl(spotifyAlbumId: string, request: MusicBrainzFetcher): Promise<string | null> {
   const resource = `https://open.spotify.com/album/${spotifyAlbumId}`;
   try {
-    const res = await musicBrainzFetch<MusicBrainzUrlLookupResponse>("/url", {
+    const res = await request<MusicBrainzUrlLookupResponse>("/url", {
       searchParams: { resource, inc: "release-rels" },
     });
     const release = res.relations.find((rel) => rel["target-type"] === "release")?.release;
@@ -72,9 +72,9 @@ async function findReleaseByStreamingUrl(spotifyAlbumId: string): Promise<string
   }
 }
 
-async function matchByFuzzySearch(album: AlbumToMatch): Promise<MatchResult> {
+async function matchByFuzzySearch(album: AlbumToMatch, request: MusicBrainzFetcher): Promise<MatchResult> {
   const query = `artist:"${escapeLuceneQuery(album.primaryArtistName!)}" AND release:"${escapeLuceneQuery(album.name)}"`;
-  const res = await musicBrainzFetch<MusicBrainzSearchResponse>("/release/", {
+  const res = await request<MusicBrainzSearchResponse>("/release/", {
     searchParams: { query, limit: 5 },
   });
 
@@ -100,11 +100,11 @@ async function matchByFuzzySearch(album: AlbumToMatch): Promise<MatchResult> {
     };
   }
 
-  return withReleaseDetail(best.id, best.score, "matched");
+  return withReleaseDetail(best.id, best.score, "matched", request);
 }
 
-async function withReleaseDetail(releaseId: string, score: number, status: MatchStatus): Promise<MatchResult> {
-  const release = await musicBrainzFetch<MusicBrainzReleaseDetail>(`/release/${releaseId}`, {
+async function withReleaseDetail(releaseId: string, score: number, status: MatchStatus, request: MusicBrainzFetcher): Promise<MatchResult> {
+  const release = await request<MusicBrainzReleaseDetail>(`/release/${releaseId}`, {
     searchParams: { inc: "labels+release-groups+genres" },
   });
 
@@ -113,7 +113,7 @@ async function withReleaseDetail(releaseId: string, score: number, status: Match
   let genres = topGenres(release.genres);
 
   if (genres.length === 0 && releaseGroupId) {
-    const releaseGroup = await musicBrainzFetch<MusicBrainzReleaseGroupDetail>(`/release-group/${releaseGroupId}`, {
+    const releaseGroup = await request<MusicBrainzReleaseGroupDetail>(`/release-group/${releaseGroupId}`, {
       searchParams: { inc: "genres" },
     });
     genres = topGenres(releaseGroup.genres);

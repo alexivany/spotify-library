@@ -17,6 +17,10 @@ try {
     console.log(`[run-enrich-once] chunk done at ${((Date.now() - t0) / 1000).toFixed(1)}s, continuing…`);
     outcome = await runEnrichment();
   }
+  if (outcome.status === "paused") {
+    console.log(`[run-enrich-once] PAUSED: ${outcome.message}`);
+    process.exit(0);
+  }
   console.log(`[run-enrich-once] SUCCESS in ${((Date.now() - t0) / 1000).toFixed(1)}s`, JSON.stringify(outcome.counts));
   process.exit(0);
 } catch (error) {

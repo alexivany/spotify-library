@@ -97,7 +97,8 @@ describe("configuration diagnostics", () => {
     }) as typeof fetch;
     try {
       const checks = await checkSetup({ ...valid, SPOTIFY_REFRESH_TOKEN: "never-display", MUSICBRAINZ_CONTACT_EMAIL: "test@example.test" });
-      assert.equal(requested.filter(url => url.hostname === "project.supabase.co").length, 13);
+      assert.equal(requested.filter(url => url.hostname === "project.supabase.co").length, 14);
+      assert.ok(requested.some(url => url.pathname.endsWith("/musicbrainz_enrichment_state")));
       assert.ok(checks.some(check => !check.ok && check.message.includes("Premium")));
       assert.ok(!JSON.stringify(checks).includes("do-not-display"));
       assert.ok(!JSON.stringify(checks).includes("never-display"));

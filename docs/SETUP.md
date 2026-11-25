@@ -270,6 +270,20 @@ Vercel's own cron requests have a documented Deployment Protection bypass, but
 external schedulers need their own protection configuration as well as the
 app's bearer secret. See [cron management](https://vercel.com/docs/cron-jobs/manage-cron-jobs).
 
+MusicBrainz enrichment pauses when the service is busy or a request times out.
+The button shows when to try again; completed albums stay saved. The cooldown
+applies across browser sessions and cron, and only one enrichment request can
+process albums at a time. Interrupted requests release their lock automatically
+after 90 seconds. A paused run can resume later without losing its totals.
+
+**Existing hosted deployments:** before deploying this enrichment update, apply
+`supabase/migrations/20261125002653_musicbrainz_enrichment_state.sql` to the same
+database used by Production (SQL Editor or your normal migration workflow).
+This adds one service-only coordination table; it does not change library data.
+Do not rerun the complete new-project schema bundle on an existing database.
+Then run `bun run setup:doctor --target vercel` and deploy the updated app.
+New installations include the migration automatically.
+
 If you skip MusicBrainz, remove its entry from `vercel.json` in your copy before
 deploying; otherwise its scheduled invocation will report missing contact info.
 Remove both cron entries if you want manual-only sync. Don't raise cron frequency

@@ -1,56 +1,20 @@
+import { randomUUID } from "node:crypto";
 import { backupDatabaseToCsv } from "@/lib/backup/csv";
 import { getSupabaseServerClient } from "@/lib/supabase/server";
 import type { Json } from "@/lib/supabase/types";
 import {
-  resetMusicBrainzCircuitBreaker,
-  setMusicBrainzChunkDeadline,
+  createMusicBrainzClient,
   MusicBrainzChunkBudgetExceededError,
   MusicBrainzUnavailableError,
 } from "./client";
 import { matchAlbum, type MatchResult } from "./match";
 
-function asJson(value: unknown): Json {
-  return value as Json;
-}
-
 const RETRY_COOLDOWN_DAYS = 7;
-const PAGE_SIZE = 1000;
-
-// Vercel's function timeout kills the invocation outright, skipping the
-// catch block in runEnrichment() below — so a run that gets killed
-// mid-flight leaves its enrichment_runs row stuck at status "running"
-// forever, with no finished_at, instead of ever reaching "error". Sweep
-// those up before starting a new run so the UI's "last enriched" reflects
-// reality instead of a row that will never update on its own. 10 minutes is
-// comfortably above the 60s maxDuration (Vercel Hobby's ceiling) this route
-// runs under.
-const STALE_RUN_THRESHOLD_MS = 10 * 60 * 1000;
-
-async function reapStaleEnrichmentRuns(supabase: ReturnType<typeof getSupabaseServerClient>) {
-  const staleCutoff = new Date(Date.now() - STALE_RUN_THRESHOLD_MS).toISOString();
-  await supabase
-    .from("enrichment_runs")
-    .update({
-      status: "error",
-      finished_at: new Date().toISOString(),
-      error: "Orphaned: the previous run exceeded Vercel's function timeout and never reported a final status.",
-      cursor: null,
-    })
-    .eq("status", "running")
-    .lt("started_at", staleCutoff);
-}
-
-// A handful of unexpected failures (network blips, a transient MusicBrainz
-// 5xx that outlasted the client's own retries) is normal over a long run.
-// More than this suggests something systemic — e.g. MusicBrainz blocking the
-// User-Agent — so abort early with a clear enrichment_runs error rather than
-// grinding through hours of failures. A re-run resumes from whatever wasn't
-// yet successfully checked.
-const MAX_ERRORS_PER_RUN = 20;
-
-// Leaves ~10s of the 60s maxDuration (Vercel Hobby's ceiling) as margin for
-// the final DB write, CSV backup, and response.
-const CHUNK_TIME_BUDGET_MS = 50 * 1000;
+const PAGE_SIZE = 100;
+// The explicit route limit is 60s. Reserve time for bounded DB finalization.
+const CHUNK_TIME_BUDGET_MS = 40_000;
+const LEASE_MS = 90_000;
+const DB_TIMEOUT_MS = 5_000;
 
 export interface EnrichmentCounts {
   candidates: number;
@@ -60,185 +24,179 @@ export interface EnrichmentCounts {
   errors: number;
 }
 
-export type EnrichmentOutcome = { status: "success"; counts: EnrichmentCounts } | { status: "partial" };
+export type EnrichmentOutcome =
+  | { status: "success"; counts: EnrichmentCounts }
+  | { status: "partial"; counts: EnrichmentCounts }
+  | { status: "paused"; retryAfterSeconds: number; message: string };
 
-export async function runEnrichment(): Promise<EnrichmentOutcome> {
-  const supabase = getSupabaseServerClient();
-  await reapStaleEnrichmentRuns(supabase);
+type Dependencies = {
+  supabase?: ReturnType<typeof getSupabaseServerClient>;
+  match?: typeof matchAlbum;
+  now?: () => number;
+  backup?: typeof backupDatabaseToCsv;
+};
 
-  // Unlike sync (which needs a pagination cursor to know what to fetch next),
-  // "what's left to do" here is always fully derived from album state — a
-  // matched/checked row simply drops out of the candidate query in
-  // performEnrichment() below. So resuming an in-progress run only needs its
-  // accumulated counts (for an accurate final total), not a real cursor.
-  const { data: inProgress } = await supabase
-    .from("enrichment_runs")
-    .select("id, cursor")
-    .eq("status", "running")
-    .order("started_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
+function restoreCounts(cursor: Json | null): EnrichmentCounts {
+  const value = cursor && typeof cursor === "object" && !Array.isArray(cursor) ? cursor : {};
+  const count = (key: string) => typeof value[key] === "number" && Number.isFinite(value[key]) ? Math.max(0, value[key] as number) : 0;
+  const matched = count("matched"), ambiguous = count("ambiguous"), unmatched = count("unmatched");
+  // Old cursors counted attempts. Rebuild the denominator from completed outcomes.
+  return { candidates: matched + ambiguous + unmatched, matched, ambiguous, unmatched, errors: count("errors") };
+}
 
-  let runId: string;
-  let resumeCounts: EnrichmentCounts | null;
-  if (inProgress) {
-    runId = inProgress.id;
-    resumeCounts = inProgress.cursor as EnrichmentCounts | null;
-  } else {
-    const { data: run, error: insertError } = await supabase
-      .from("enrichment_runs")
-      .insert({ status: "running" })
-      .select()
-      .single();
-    if (insertError || !run) {
-      throw new Error(`Failed to create enrichment_runs row: ${insertError?.message}`);
-    }
-    runId = run.id;
-    resumeCounts = null;
+function paused(seconds: number, busy = false): EnrichmentOutcome {
+  const retryAfterSeconds = Math.max(1, Math.ceil(seconds));
+  return {
+    status: "paused", retryAfterSeconds,
+    message: busy
+      ? `Another enrichment request is running. Try again in ${retryAfterSeconds} seconds.`
+      : `MusicBrainz is busy. Your progress is saved. Try again in ${retryAfterSeconds} seconds.`,
+  };
+}
+
+export async function runEnrichment(dependencies: Dependencies = {}): Promise<EnrichmentOutcome> {
+  const now = dependencies.now ?? Date.now;
+  const deadline = now() + CHUNK_TIME_BUDGET_MS;
+  const supabase = dependencies.supabase ?? getSupabaseServerClient();
+  const token = randomUUID();
+  const timestamp = () => new Date(now()).toISOString();
+  const dbSignal = (withinChunk = false) => AbortSignal.timeout(withinChunk ? Math.max(1, Math.min(DB_TIMEOUT_MS, deadline - now())) : DB_TIMEOUT_MS);
+  const asJson = (value: EnrichmentCounts) => value as unknown as Json;
+
+  // UPDATE's predicate and row lock make this an atomic claim across instances.
+  const { data: lease, error: claimError } = await supabase
+    .from("musicbrainz_enrichment_state")
+    .update({ lease_token: token, lease_expires_at: new Date(now() + LEASE_MS).toISOString(), heartbeat_at: timestamp() })
+    .eq("id", true).lte("lease_expires_at", timestamp()).lte("retry_after", timestamp())
+    .select("no_progress_chunks").abortSignal(dbSignal()).maybeSingle();
+  if (claimError) throw new Error(`Cannot coordinate MusicBrainz enrichment. Apply the latest database migrations. ${claimError.message}`);
+  if (!lease) {
+    const { data: state, error } = await supabase.from("musicbrainz_enrichment_state")
+      .select("lease_expires_at, retry_after").eq("id", true).abortSignal(dbSignal()).single();
+    if (error || !state) throw new Error("MusicBrainz coordination state is unavailable. Apply the latest database migrations.");
+    const retryAt = Date.parse(state.retry_after), leaseUntil = Date.parse(state.lease_expires_at);
+    return paused((Math.max(retryAt, leaseUntil) - now()) / 1000, leaseUntil > now() && leaseUntil >= retryAt);
+  }
+
+  let runId: string | undefined;
+  let counts = restoreCounts(null);
+  let retryAt = new Date(0).toISOString();
+  let noProgressChunks = lease.no_progress_chunks;
+  let finishedSuccessfully = false;
+
+  async function heartbeat() {
+    const { data, error } = await supabase.from("musicbrainz_enrichment_state")
+      .update({ heartbeat_at: timestamp() }).eq("id", true).eq("lease_token", token)
+      .select("id").abortSignal(dbSignal(true)).maybeSingle();
+    if (error || !data) throw new Error("Lost the MusicBrainz enrichment lease; retry after the current request finishes.");
+  }
+
+  async function checkpoint(withinChunk = false) {
+    const { error } = await supabase.from("enrichment_runs").update({ cursor: asJson(counts) })
+      .eq("id", runId!).abortSignal(dbSignal(withinChunk));
+    if (error) throw new Error(`Failed to save enrichment progress: ${error.message}`);
   }
 
   try {
-    const step = await performEnrichment(resumeCounts);
-    if (step.done === false) {
-      await supabase.from("enrichment_runs").update({ cursor: asJson(step.counts) }).eq("id", runId);
-      return { status: "partial" };
+    // A run may be paused overnight. Its original start time is not a heartbeat.
+    // Only the short invocation lease expires; the run and completed albums survive.
+    const { data: existing, error } = await supabase.from("enrichment_runs")
+      .select("id, cursor").eq("status", "running").order("started_at", { ascending: false })
+      .limit(1).abortSignal(dbSignal(true)).maybeSingle();
+    if (error) throw new Error(`Failed to load enrichment progress: ${error.message}`);
+    if (existing) {
+      runId = existing.id;
+      counts = restoreCounts(existing.cursor);
+    } else {
+      const { data: run, error: insertError } = await supabase.from("enrichment_runs")
+        .insert({ status: "running" }).select("id").abortSignal(dbSignal(true)).single();
+      if (insertError || !run) throw new Error(`Failed to create enrichment run: ${insertError?.message}`);
+      runId = run.id;
     }
 
-    await supabase
-      .from("enrichment_runs")
-      .update({
-        status: "success",
-        finished_at: new Date().toISOString(),
-        counts: asJson(step.counts),
-        cursor: null,
-      })
-      .eq("id", runId);
+    const completedBefore = counts.candidates;
+    const request = createMusicBrainzClient({ deadline, now });
+    const cutoff = new Date(now() - RETRY_COOLDOWN_DAYS * 86_400_000).toISOString();
+    let cooldownSeconds = 0;
+    let done = false;
+
     try {
-      const backup = await backupDatabaseToCsv();
-      console.log(`[enrich] CSV backup written to ${backup.dir}`);
-    } catch (backupError) {
-      console.warn(
-        `[enrich] CSV backup failed: ${backupError instanceof Error ? backupError.message : String(backupError)}`,
-      );
-    }
-    return { status: "success", counts: step.counts };
-  } catch (error) {
-    await supabase
-      .from("enrichment_runs")
-      .update({
-        status: "error",
-        finished_at: new Date().toISOString(),
-        error: error instanceof Error ? error.message : String(error),
-        cursor: null,
-      })
-      .eq("id", runId);
-    throw error;
-  }
-}
-
-/**
- * Processes every album needing MusicBrainz enrichment: never checked, or
- * checked before but not confidently matched and past the 7-day cooldown.
- * Every conclusive result (matched/ambiguous/unmatched) sets
- * musicbrainz_checked_at, which removes that album from the candidate set —
- * matched rows permanently (excluded by status), the rest until the cooldown
- * next elapses. So repeatedly re-querying from the top of the (shrinking)
- * candidate set, rather than paging with an increasing offset, naturally
- * drains the whole backlog without the classic "offset pagination skips rows
- * as the underlying set shrinks" problem. An album that keeps erroring stays
- * in the set (checked_at untouched) and gets retried each pass, which is what
- * feeds the circuit breaker below.
- *
- * MusicBrainz's ~1.1s/request pacing means a large backlog can take far
- * longer than a single serverless invocation is allowed to run. Rather than
- * let Vercel kill the invocation mid-request, this checks a time budget
- * between albums and returns early with the counts accumulated so far —
- * runEnrichment() persists them and the next invocation (another cron tick,
- * or the button firing again) picks up automatically, since the DB query
- * above already excludes whatever this chunk just finished checking.
- */
-async function performEnrichment(
-  resumeFrom: EnrichmentCounts | null,
-): Promise<{ done: true; counts: EnrichmentCounts } | { done: false; counts: EnrichmentCounts }> {
-  const supabase = getSupabaseServerClient();
-  const deadline = Date.now() + CHUNK_TIME_BUDGET_MS;
-  const counts: EnrichmentCounts = resumeFrom ?? { candidates: 0, matched: 0, ambiguous: 0, unmatched: 0, errors: 0 };
-  const cutoffIso = new Date(Date.now() - RETRY_COOLDOWN_DAYS * 24 * 60 * 60 * 1000).toISOString();
-  resetMusicBrainzCircuitBreaker();
-  // A single request's own retry backoff (up to MAX_TRANSIENT_RETRIES) can
-  // otherwise burn past this whole chunk's budget before the between-
-  // candidate check below ever runs — see MusicBrainzChunkBudgetExceededError.
-  setMusicBrainzChunkDeadline(deadline);
-
-  for (;;) {
-    const { data, error } = await supabase
-      .from("albums")
-      .select("id, name, total_tracks, album_artists(position, artists(name))")
-      .not("saved_at", "is", null)
-      .or(`musicbrainz_checked_at.is.null,and(musicbrainz_match_status.neq.matched,musicbrainz_checked_at.lt.${cutoffIso})`)
-      .range(0, PAGE_SIZE - 1);
-    if (error) throw new Error(`Failed to load enrichment candidates: ${error.message}`);
-    if (!data || data.length === 0) return { done: true, counts };
-
-    console.log(`[enrich] processing ${data.length} candidate album(s)`);
-
-    for (const row of data) {
-      counts.candidates += 1;
-      const primaryArtistName =
-        (row.album_artists ?? [])
-          .slice()
-          .sort((a, b) => a.position - b.position)[0]?.artists?.name ?? null;
-
-      try {
-        const result = await matchAlbum({
-          id: row.id,
-          name: row.name,
-          totalTracks: row.total_tracks,
-          primaryArtistName,
-        });
-        await persistMatch(row.id, result);
-        counts[result.status] += 1;
-      } catch (err) {
-        if (err instanceof MusicBrainzUnavailableError) {
-          console.warn(`[enrich] ${err.message}`);
-          throw err;
+      while (now() < deadline) {
+        const { data: albums, error: loadError } = await supabase.from("albums")
+          .select("id, name, total_tracks, album_artists(position, artists(name))")
+          .not("saved_at", "is", null)
+          .or(`musicbrainz_checked_at.is.null,and(musicbrainz_match_status.neq.matched,musicbrainz_checked_at.lt.${cutoff})`)
+          .order("id").limit(PAGE_SIZE).abortSignal(dbSignal(true));
+        if (loadError) throw new Error(`Failed to load enrichment candidates: ${loadError.message}`);
+        if (!albums?.length) { done = true; break; }
+        console.log(`[enrich] processing up to ${albums.length} candidate album(s)`);
+        for (const album of albums) {
+          if (now() >= deadline) throw new MusicBrainzChunkBudgetExceededError();
+          const primaryArtistName = (album.album_artists ?? []).slice().sort((a, b) => a.position - b.position)[0]?.artists?.name ?? null;
+          const result = await (dependencies.match ?? matchAlbum)({ id: album.id, name: album.name, totalTracks: album.total_tracks, primaryArtistName }, request);
+          await persistMatch(album.id, result);
+          counts[result.status]++;
+          counts.candidates++;
+          await checkpoint(true);
+          await heartbeat();
         }
-        if (err instanceof MusicBrainzChunkBudgetExceededError) {
-          console.warn(`[enrich] ${err.message}`);
-          return { done: false, counts };
-        }
-        counts.errors += 1;
-        console.warn(
-          `[enrich] Failed to match album ${row.id} (${row.name}): ${err instanceof Error ? err.message : String(err)}`,
-        );
-        if (counts.errors > MAX_ERRORS_PER_RUN) {
-          throw new Error(
-            `MusicBrainz enrichment hit ${counts.errors} unexpected errors in this run — aborting rather than ` +
-              `continuing to grind through failures. A re-run resumes from whatever wasn't yet checked.`,
-          );
-        }
+        // Re-query the shrinking set, including after short pages, to confirm completion.
       }
-
-      if (Date.now() >= deadline) return { done: false, counts };
+    } catch (error) {
+      if (error instanceof MusicBrainzUnavailableError) cooldownSeconds = error.retryAfterSeconds;
+      else if (!(error instanceof MusicBrainzChunkBudgetExceededError)) throw error;
     }
 
-    if (data.length < PAGE_SIZE) return { done: true, counts };
-  }
-}
+    const completed = counts.candidates - completedBefore;
+    noProgressChunks = completed > 0 || done ? 0 : noProgressChunks + 1;
+    if (cooldownSeconds || (!done && completed === 0)) {
+      const delay = Math.max(cooldownSeconds, Math.min(900, 60 * 2 ** Math.min(noProgressChunks, 4)));
+      retryAt = new Date(now() + delay * 1000).toISOString();
+      await checkpoint();
+      console.warn(`[enrich] paused for ${delay}s; completed ${completed} album(s) this chunk`);
+      return paused(delay);
+    }
+    if (!done) {
+      await checkpoint();
+      console.log(`[enrich] chunk saved; completed ${completed} album(s)`);
+      return { status: "partial", counts };
+    }
 
-async function persistMatch(albumId: string, result: MatchResult) {
-  const supabase = getSupabaseServerClient();
-  const { error } = await supabase
-    .from("albums")
-    .update({
-      musicbrainz_release_id: result.releaseId,
-      musicbrainz_release_group_id: result.releaseGroupId,
-      musicbrainz_label: result.label,
-      musicbrainz_genres: result.genres,
-      musicbrainz_match_status: result.status,
-      musicbrainz_match_score: result.score,
-      musicbrainz_checked_at: new Date().toISOString(),
-    })
-    .eq("id", albumId);
-  if (error) throw new Error(`Failed to persist MusicBrainz match for album ${albumId}: ${error.message}`);
+    const { error: finishError } = await supabase.from("enrichment_runs")
+      .update({ status: "success", finished_at: timestamp(), counts: asJson(counts), cursor: null, error: null })
+      .eq("id", runId!).abortSignal(dbSignal());
+    if (finishError) throw new Error(`Failed to finish enrichment run: ${finishError.message}`);
+    finishedSuccessfully = true;
+    console.log(`[enrich] completed; ${counts.matched}/${counts.candidates} albums matched`);
+    return { status: "success", counts };
+  } catch (error) {
+    if (runId) {
+      counts.errors++;
+      const { error: saveError } = await supabase.from("enrichment_runs")
+        .update({ status: "error", finished_at: timestamp(), counts: asJson(counts), cursor: null, error: error instanceof Error ? error.message : String(error) })
+        .eq("id", runId!).abortSignal(dbSignal());
+      if (saveError) console.error("[enrich] Failed to save run failure; the next invocation can recover after the lease expires.");
+    }
+    throw error;
+  } finally {
+    const { data, error } = await supabase.from("musicbrainz_enrichment_state")
+      .update({ lease_token: null, lease_expires_at: timestamp(), heartbeat_at: timestamp(), retry_after: retryAt, no_progress_chunks: noProgressChunks })
+      .eq("id", true).eq("lease_token", token).select("id").abortSignal(dbSignal()).maybeSingle();
+    if (error || !data) throw new Error("Could not save MusicBrainz cooldown state. Wait 90 seconds before trying again.");
+    // A local backup can outlive the chunk. Release the work lease first.
+    if (finishedSuccessfully && !process.env.VERCEL) {
+      try { await (dependencies.backup ?? backupDatabaseToCsv)(); }
+      catch { console.warn("[enrich] Local CSV backup failed; enrichment progress is saved in the database."); }
+    }
+  }
+
+  async function persistMatch(albumId: string, result: MatchResult) {
+    const { error } = await supabase.from("albums").update({
+      musicbrainz_release_id: result.releaseId, musicbrainz_release_group_id: result.releaseGroupId,
+      musicbrainz_label: result.label, musicbrainz_genres: result.genres,
+      musicbrainz_match_status: result.status, musicbrainz_match_score: result.score,
+      musicbrainz_checked_at: timestamp(),
+    }).eq("id", albumId).abortSignal(dbSignal(true));
+    if (error) throw new Error(`Failed to persist MusicBrainz match: ${error.message}`);
+  }
 }

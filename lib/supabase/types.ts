@@ -184,6 +184,33 @@ export type Database = {
         }
         Relationships: []
       }
+      musicbrainz_enrichment_state: {
+        Row: {
+          id: boolean
+          lease_token: string | null
+          lease_expires_at: string
+          heartbeat_at: string
+          retry_after: string
+          no_progress_chunks: number
+        }
+        Insert: {
+          id?: boolean
+          lease_token?: string | null
+          lease_expires_at?: string
+          heartbeat_at?: string
+          retry_after?: string
+          no_progress_chunks?: number
+        }
+        Update: {
+          id?: boolean
+          lease_token?: string | null
+          lease_expires_at?: string
+          heartbeat_at?: string
+          retry_after?: string
+          no_progress_chunks?: number
+        }
+        Relationships: []
+      }
       enrichment_runs: {
         Row: {
           counts: Json
