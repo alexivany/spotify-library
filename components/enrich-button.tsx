@@ -16,10 +16,12 @@ export function EnrichButton() {
   const [pending, setPending] = useState(false);
   const [progress, setProgress] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
 
   async function handleEnrich() {
     setPending(true);
     setError(null);
+    setNotice(null);
     setProgress(null);
     try {
       for (let chunk = 1; chunk <= MAX_CHUNKS; chunk++) {
@@ -32,6 +34,12 @@ export function EnrichButton() {
           router.refresh();
           return;
         }
+        if (json?.status === "paused") {
+          setNotice(json.message);
+          router.refresh();
+          return;
+        }
+        if (json?.status !== "partial") throw new Error("Unexpected enrichment response. Please try again.");
         // status === "partial": more chunks to go.
         setProgress(chunk);
       }
@@ -46,7 +54,8 @@ export function EnrichButton() {
 
   return (
     <div className="flex items-center gap-2">
-      {error && <span className="text-xs text-destructive">{error}</span>}
+      {error && <span role="alert" className="text-xs text-destructive">{error}</span>}
+      {notice && <span role="status" className="text-xs text-muted-foreground">{notice}</span>}
       <Button size="sm" variant="outline" onClick={handleEnrich} disabled={pending}>
         {pending ? (progress ? `Enriching… (${progress})` : "Enriching…") : "Enrich now"}
       </Button>
